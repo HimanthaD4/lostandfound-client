@@ -1,15 +1,7 @@
-// Configuration for API endpoints and campus settings
-const getApiBaseUrl = () => {
-  // Use environment variable in production, localhost in development
-  if (process.env.NODE_ENV === 'production') {
-    return 'https://device-tracker-server.onrender.com/api';
-  } else {
-    return 'http://localhost:5000/api';
-  }
-};
-
+// config.js - FIXED VERSION
 const config = {
-  API_BASE_URL: getApiBaseUrl(),
+  // Always use the Render backend URL - remove localhost completely
+  API_BASE_URL: 'https://device-tracker-server.onrender.com/api',
   
   // Campus Configuration
   CAMPUS_SETTINGS: {
@@ -20,6 +12,6 @@ const config = {
   }
 };
 
-console.log('Environment:', process.env.NODE_ENV);
 console.log('API Base URL:', config.API_BASE_URL);
+console.log('Environment:', process.env.NODE_ENV);
 export default config;
