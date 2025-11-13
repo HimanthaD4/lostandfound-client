@@ -9,6 +9,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [currentDeviceId, setCurrentDeviceId] = useState(null);
   const [locationStatus, setLocationStatus] = useState('initializing');
   const [userLocation, setUserLocation] = useState(null);
+  const [campusCenter, setCampusCenter] = useState(null);
   const locationWatcherRef = useRef(null);
   const locationIntervalRef = useRef(null);
   const [deviceCheckComplete, setDeviceCheckComplete] = useState(false);
@@ -18,6 +19,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [learningActive, setLearningActive] = useState(false);
   const [gpsAccuracy, setGpsAccuracy] = useState(null);
   const [locationUpdates, setLocationUpdates] = useState(0);
+  const [deviceConnectivity, setDeviceConnectivity] = useState({});
 
   useEffect(() => {
     initializeDeviceTracking();
@@ -29,7 +31,8 @@ const Dashboard = ({ user, onLogout }) => {
       fetchDevices();
       fetchAlerts();
       fetchBehaviorProgress();
-    }, 3000);
+      checkDeviceConnectivity();
+    }, 5000); // Check every 5 seconds
 
     return () => {
       stopAutomaticLocationUpdates();
@@ -57,6 +60,21 @@ const Dashboard = ({ user, onLogout }) => {
     } catch (err) {
       console.error('Failed to fetch behavior progress:', err);
     }
+  };
+
+  const checkDeviceConnectivity = () => {
+    const connectivity = {};
+    devices.forEach(device => {
+      if (device.last_updated) {
+        const lastUpdate = new Date(device.last_updated);
+        const now = new Date();
+        const diffSeconds = (now - lastUpdate) / 1000;
+        connectivity[device.device_id] = diffSeconds < 60; // Online if updated in last 60 seconds
+      } else {
+        connectivity[device.device_id] = false;
+      }
+    });
+    setDeviceConnectivity(connectivity);
   };
 
   const simulateLearningComplete = async () => {
@@ -163,7 +181,6 @@ const Dashboard = ({ user, onLogout }) => {
       },
       (error) => {
         console.error('GPS watch error:', error);
-        // Don't fall back immediately, try a few times
         setTimeout(() => {
           if (locationStatus === 'tracking_mobile_gps') {
             startDesktopLocationTracking(deviceId);
@@ -196,7 +213,8 @@ const Dashboard = ({ user, onLogout }) => {
       timestamp: new Date().toISOString(),
       source: source,
       is_mobile: true,
-      gps_quality: getGPSQuality(position.coords.accuracy)
+      gps_quality: getGPSQuality(position.coords.accuracy),
+      connectivity: 'online' // GPS tracking implies online
     };
 
     setGpsAccuracy(position.coords.accuracy);
@@ -207,6 +225,14 @@ const Dashboard = ({ user, onLogout }) => {
       latitude: location.latitude,
       longitude: location.longitude
     });
+
+    // Set campus center based on first location if not set
+    if (!campusCenter) {
+      setCampusCenter({
+        latitude: location.latitude,
+        longitude: location.longitude
+      });
+    }
 
     await updateDeviceLocation(deviceId, location);
   };
@@ -237,8 +263,17 @@ const Dashboard = ({ user, onLogout }) => {
             location_type: 'browser_geolocation',
             timestamp: new Date().toISOString(),
             source: 'browser_geolocation',
-            is_mobile: false
+            is_mobile: false,
+            connectivity: navigator.onLine ? 'online' : 'offline'
           };
+          
+          if (!campusCenter) {
+            setCampusCenter({
+              latitude: location.latitude,
+              longitude: location.longitude
+            });
+          }
+          
           await updateDeviceLocation(deviceId, location);
         },
         async (error) => {
@@ -271,6 +306,8 @@ const Dashboard = ({ user, onLogout }) => {
   };
 
   const getNetworkBasedLocation = async () => {
+    const connectivity = navigator.onLine ? 'online' : 'offline';
+    
     try {
       // Try multiple location services
       const services = [
@@ -295,7 +332,8 @@ const Dashboard = ({ user, onLogout }) => {
                 location_type: 'network_ip',
                 timestamp: new Date().toISOString(),
                 source: 'network_geolocation',
-                is_mobile: false
+                is_mobile: false,
+                connectivity: connectivity
               };
             }
           }
@@ -306,29 +344,37 @@ const Dashboard = ({ user, onLogout }) => {
       }
 
       // Fallback to default location with some variation
+      const baseLat = campusCenter ? campusCenter.latitude : 6.9271;
+      const baseLng = campusCenter ? campusCenter.longitude : 79.8612;
+      
       return {
-        latitude: 6.9271 + (Math.random() - 0.5) * 0.001,
-        longitude: 79.8612 + (Math.random() - 0.5) * 0.001,
+        latitude: baseLat + (Math.random() - 0.5) * 0.001,
+        longitude: baseLng + (Math.random() - 0.5) * 0.001,
         accuracy: 5000,
-        city: 'Colombo',
-        country: 'Sri Lanka',
+        city: 'Network Location',
+        country: 'IP Based',
         location_type: 'network_fallback',
         timestamp: new Date().toISOString(),
         source: 'fallback',
-        is_mobile: false
+        is_mobile: false,
+        connectivity: connectivity
       };
     } catch (error) {
       console.error('All network location services failed:', error);
+      const baseLat = campusCenter ? campusCenter.latitude : 6.9271;
+      const baseLng = campusCenter ? campusCenter.longitude : 79.8612;
+      
       return {
-        latitude: 6.9271,
-        longitude: 79.8612,
+        latitude: baseLat,
+        longitude: baseLng,
         accuracy: 10000,
-        city: 'Colombo',
-        country: 'Sri Lanka',
+        city: 'Default Location',
+        country: 'Fallback',
         location_type: 'default',
         timestamp: new Date().toISOString(),
         source: 'default_fallback',
-        is_mobile: false
+        is_mobile: false,
+        connectivity: connectivity
       };
     }
   };
@@ -354,7 +400,8 @@ const Dashboard = ({ user, onLogout }) => {
                   ...device, 
                   last_location: location,
                   last_updated: new Date().toISOString(),
-                  is_mobile: location.is_mobile || false
+                  is_mobile: location.is_mobile || false,
+                  connectivity: location.connectivity || 'online'
                 }
               : device
           );
@@ -367,13 +414,20 @@ const Dashboard = ({ user, onLogout }) => {
               device_type: isMobileDevice() ? 'mobile' : 'laptop',
               last_location: location,
               last_updated: new Date().toISOString(),
-              is_mobile: location.is_mobile || false
+              is_mobile: location.is_mobile || false,
+              connectivity: location.connectivity || 'online'
             };
             return [...updatedDevices, newDevice];
           }
           
           return updatedDevices;
         });
+
+        // Update connectivity status
+        setDeviceConnectivity(prev => ({
+          ...prev,
+          [deviceId]: location.connectivity !== 'offline'
+        }));
 
         if (result.anomalies_detected > 0) {
           console.log(`🚨 ${result.anomalies_detected} behavior anomalies detected`);
@@ -389,6 +443,11 @@ const Dashboard = ({ user, onLogout }) => {
       }
     } catch (err) {
       console.error('Failed to update device location:', err);
+      // Mark device as offline if request fails
+      setDeviceConnectivity(prev => ({
+        ...prev,
+        [deviceId]: false
+      }));
     }
   };
 
@@ -406,7 +465,20 @@ const Dashboard = ({ user, onLogout }) => {
     try {
       const response = await apiRequest(`/devices/${user.email}`);
       const data = await response.json();
-      setDevices(data);
+      
+      // Update connectivity status for all devices
+      const updatedDevices = data.map(device => {
+        const lastUpdate = device.last_updated ? new Date(device.last_updated) : null;
+        const now = new Date();
+        const isOnline = lastUpdate ? (now - lastUpdate) / 1000 < 60 : false;
+        
+        return {
+          ...device,
+          connectivity: isOnline ? 'online' : 'offline'
+        };
+      });
+      
+      setDevices(updatedDevices);
     } catch (err) {
       console.error('Failed to fetch devices:', err);
     }
@@ -423,6 +495,7 @@ const Dashboard = ({ user, onLogout }) => {
   };
 
   const getStatus = (device) => {
+    if (device.connectivity === 'offline') return 'offline';
     if (!device.last_updated) return 'offline';
     
     const lastUpdate = new Date(device.last_updated);
@@ -454,7 +527,8 @@ const Dashboard = ({ user, onLogout }) => {
             timestamp: new Date().toISOString(),
             source: 'manual_gps_high_accuracy',
             is_mobile: isMobileDevice(),
-            gps_quality: getGPSQuality(position.coords.accuracy)
+            gps_quality: getGPSQuality(position.coords.accuracy),
+            connectivity: 'online'
           };
           await updateDeviceLocation(currentDeviceId, location);
           setLocationStatus(isMobileDevice() ? 'tracking_mobile_gps' : 'tracking_desktop_enhanced');
@@ -493,6 +567,10 @@ const Dashboard = ({ user, onLogout }) => {
     }
   };
 
+  const getConnectivityStatus = (device) => {
+    return device.connectivity === 'online' ? '🟢 Online' : '🔴 Offline';
+  };
+
   const getDisplayAlerts = () => {
     if (showAllAlerts) {
       return alerts;
@@ -503,13 +581,6 @@ const Dashboard = ({ user, onLogout }) => {
   const toggleShowAllAlerts = () => {
     setShowAllAlerts(!showAllAlerts);
   };
-
-  const campusSections = [
-    { name: "Library Section", type: "library", color: "#3B82F6" },
-    { name: "Laboratory Section", type: "lab", color: "#10B981" },
-    { name: "Classroom Section", type: "classroom", color: "#F59E0B" },
-    { name: "Administration Section", type: "admin", color: "#EF4444" }
-  ];
 
   const getLearningStatusText = () => {
     if (behaviorProgress >= 100) {
@@ -618,11 +689,16 @@ const Dashboard = ({ user, onLogout }) => {
             <div key={device.device_id} className="device-card">
               <div className="device-header">
                 <h4>{device.device_name || `Device ${index + 1}`}</h4>
-                <span className={`device-status status-${getStatus(device)}`}>
-                  {getStatus(device).toUpperCase()}
-                  {getStatus(device) === 'safe' ? ' 🟢' : 
-                   getStatus(device) === 'warning' ? ' 🟡' : ' 🔴'}
-                </span>
+                <div className="device-status-group">
+                  <span className={`device-status status-${getStatus(device)}`}>
+                    {getStatus(device).toUpperCase()}
+                    {getStatus(device) === 'safe' ? ' 🟢' : 
+                     getStatus(device) === 'warning' ? ' 🟡' : ' 🔴'}
+                  </span>
+                  <span className={`connectivity-status ${device.connectivity}`}>
+                    {getConnectivityStatus(device)}
+                  </span>
+                </div>
               </div>
               
               <div className="device-info">
@@ -729,20 +805,11 @@ const Dashboard = ({ user, onLogout }) => {
         <div className="map-section">
           <h3>Live Device Locations</h3>
           <div className="map-container">
-            <MapView devices={devices} userLocation={userLocation} />
-          </div>
-          
-          <div className="campus-legend">
-            <h4>Campus Sections</h4>
-            {campusSections.map((section, index) => (
-              <div key={index} className="legend-zone-item">
-                <span 
-                  className="legend-zone-color" 
-                  style={{backgroundColor: section.color}}
-                ></span>
-                <span>{section.name} ({section.type})</span>
-              </div>
-            ))}
+            <MapView 
+              devices={devices} 
+              userLocation={userLocation}
+              campusCenter={campusCenter}
+            />
           </div>
           
           <div className="map-legend">
@@ -769,6 +836,14 @@ const Dashboard = ({ user, onLogout }) => {
             <div className="legend-item">
               <span className="gps-quality good"></span>
               <span>Good GPS (10-25m accuracy)</span>
+            </div>
+            <div className="legend-item">
+              <span className="connectivity-dot online"></span>
+              <span>Online (Connected to internet)</span>
+            </div>
+            <div className="legend-item">
+              <span className="connectivity-dot offline"></span>
+              <span>Offline (No internet connection)</span>
             </div>
           </div>
         </div>
