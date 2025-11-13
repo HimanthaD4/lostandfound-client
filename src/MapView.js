@@ -17,7 +17,7 @@ class CampusManager {
     this.campusCenter = campusCenter || { latitude: 6.9271, longitude: 79.8612 };
     this.campusBounds = this.generateCampusBounds();
     this.sections = this.generateCampusSections();
-    this.isFixed = true; // Campus is fixed, doesn't move
+    this.isFixed = true;
   }
 
   generateCampusBounds() {
@@ -281,6 +281,7 @@ const getQualityColor = (quality) => {
     case 'excellent': return '#10B981';
     case 'good': return '#3B82F6';
     case 'moderate': return '#F59E0B';
+    case 'fair': return '#F97316';
     case 'poor': return '#EF4444';
     default: return '#6B7280';
   }
@@ -365,13 +366,13 @@ function StableMapUpdater({ devices, userInteracting, campusCenter }) {
       const currentMapZoom = map.getZoom();
       const currentMapCenter = map.getCenter();
       
-      // Only update zoom if it's significantly different
       const zoomChanged = currentZoom.current === null || Math.abs(currentMapZoom - zoom) > 1;
-      const centerChanged = currentMapCenter.distanceTo(center) > 100;
+      const centerChanged = currentMapCenter.distanceTo(center) > 50;
       
       if (zoomChanged || centerChanged) {
         map.flyTo(center, zoom, {
-          duration: 1.5
+          duration: 1.5,
+          easeLinearity: 0.25
         });
         currentZoom.current = zoom;
       }
@@ -404,7 +405,7 @@ function CampusSectionsRenderer({ sections }) {
           pathOptions={{
             color: section.color,
             fillColor: section.color,
-            fillOpacity: 0.3,
+            fillOpacity: 0.25,
             weight: 2,
             opacity: 0.8
           }}
@@ -432,7 +433,7 @@ function CampusBoundaryRenderer({ campusBounds }) {
       pathOptions={{
         color: '#6366F1',
         fillColor: '#6366F1',
-        fillOpacity: 0.05,
+        fillOpacity: 0.03,
         weight: 3,
         opacity: 0.8,
         dashArray: '10, 10'
@@ -489,7 +490,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                     <div>
                       <strong>GPS Quality:</strong> 
                       <span className={`gps-quality ${gpsQuality}`} style={{marginLeft: '5px'}}>
-                        {gpsQuality.toUpperCase()}
+                        {gpsQuality.toUpperCase()} ({device.last_location.accuracy ? `±${Math.round(device.last_location.accuracy)}m` : 'N/A'})
                       </span>
                     </div>
                   )}
@@ -515,7 +516,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                   )}
                   <div><strong>Coordinates:</strong> {device.last_location.latitude.toFixed(6)}, {device.last_location.longitude.toFixed(6)}</div>
                   {device.last_location.accuracy && (
-                    <div><strong>Accuracy:</strong> ±{Math.round(device.last_location.accuracy)}m</div>
+                    <div><strong>Accuracy:</strong> ±{Math.round(device.last_location.accuracy)} meters</div>
                   )}
                   {device.last_location.heading && (
                     <div><strong>Heading:</strong> {device.last_location.heading.toFixed(1)}°</div>
@@ -524,7 +525,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                     <div><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</div>
                   )}
                   {isCurrentDevice(device) && (
-                    <div><strong>📍 Current Device - Live Tracking</strong></div>
+                    <div><strong>📍 Current Device - Live High-Precision Tracking</strong></div>
                   )}
                 </div>
               </div>
@@ -540,7 +541,7 @@ const shouldUpdateMap = (currentDevices, lastPositions, lastCount) => {
   if (Math.abs(currentDevices.length - lastCount) > 0) return true;
   if (lastPositions.length === 0) return true;
 
-  const significantMoveThreshold = 0.00001;
+  const significantMoveThreshold = 0.000001; // More sensitive to movement
   
   for (const currentDevice of currentDevices) {
     const lastPosition = lastPositions.find(pos => pos.device_id === currentDevice.device_id);
@@ -576,10 +577,10 @@ const calculateMapCenter = (validDevices) => {
 };
 
 const calculateZoom = (validDevices) => {
-  if (validDevices.length <= 1) return 18;
-  if (validDevices.length === 2) return 17;
-  if (validDevices.length <= 5) return 16;
-  return 15;
+  if (validDevices.length <= 1) return 19;
+  if (validDevices.length === 2) return 18;
+  if (validDevices.length <= 5) return 17;
+  return 16;
 };
 
 const MapView = ({ devices, userLocation, campusCenter }) => {
@@ -588,7 +589,6 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
   const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
-    // Create campus manager with fixed center
     const effectiveCampusCenter = campusCenter || { latitude: 6.9271, longitude: 79.8612 };
     const manager = new CampusManager(effectiveCampusCenter);
     setCampusManager(manager);
@@ -663,11 +663,14 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
       scrollWheelZoom={true}
       zoomControl={true}
       doubleClickZoom={true}
-      zoomSnap={0.5}
+      zoomSnap={0.1}
       zoomDelta={0.5}
-      wheelPxPerZoomLevel={120}
+      wheelPxPerZoomLevel={60}
       preferCanvas={true}
       worldCopyJump={false}
+      inertia={true}
+      inertiaDeceleration={3000}
+      inertiaMaxSpeed={1500}
     >
       <MapController onUserInteraction={handleUserInteraction} />
       
@@ -683,9 +686,10 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         maxZoom={22}
-        updateWhenIdle={true}
-        updateWhenZooming={false}
-        keepBuffer={10}
+        updateWhenIdle={false}
+        updateWhenZooming={true}
+        keepBuffer={2}
+        maxNativeZoom={19}
       />
 
       {campusManager && campusManager.campusBounds && (
@@ -713,7 +717,7 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
             <div className="popup-content">
               <strong>University Campus</strong>
               <div className="popup-details">
-                <p>Waiting for device location updates...</p>
+                <p>Waiting for high-precision device location...</p>
                 <p><strong>Campus Ready:</strong> {campusManager.sections.length} properly separated sections</p>
               </div>
             </div>
