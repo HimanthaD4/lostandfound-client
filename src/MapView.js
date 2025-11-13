@@ -4,7 +4,6 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import config from './config';
 
-// Fix for default markers in react-leaflet
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -13,15 +12,18 @@ L.Icon.Default.mergeOptions({
 });
 
 class CampusManager {
-  constructor(campusCenter) {
-    this.campusCenter = campusCenter || { latitude: 6.9271, longitude: 79.8612 };
+  constructor(userLocation) {
+    this.userLocation = userLocation;
     this.campusBounds = this.generateCampusBounds();
     this.sections = this.generateCampusSections();
-    this.isFixed = true;
   }
 
   generateCampusBounds() {
-    const { latitude, longitude } = this.campusCenter;
+    if (!this.userLocation) {
+      this.userLocation = { latitude: 6.9271, longitude: 79.8612 };
+    }
+    
+    const { latitude, longitude } = this.userLocation;
     const { CAMPUS_WIDTH, CAMPUS_HEIGHT } = config.CAMPUS_SETTINGS;
     
     const southWest = [
@@ -89,6 +91,8 @@ class CampusManager {
       }
     ];
 
+    this.verifyNoOverlaps(sections);
+    
     return sections;
   }
 
@@ -103,6 +107,73 @@ class CampusManager {
       [lat + height/2, lng - width/2],
       [lat - height/2, lng - width/2]
     ];
+  }
+
+  verifyNoOverlaps(sections) {
+    let hasOverlaps = false;
+    
+    for (let i = 0; i < sections.length; i++) {
+      for (let j = i + 1; j < sections.length; j++) {
+        const sectionA = sections[i];
+        const sectionB = sections[j];
+        
+        if (this.doPolygonsOverlap(sectionA.coordinates, sectionB.coordinates)) {
+          hasOverlaps = true;
+        }
+      }
+    }
+    
+    return !hasOverlaps;
+  }
+
+  doPolygonsOverlap(polyA, polyB) {
+    const boundsA = this.getPolygonBounds(polyA);
+    const boundsB = this.getPolygonBounds(polyB);
+    
+    if (boundsA.north < boundsB.south || boundsA.south > boundsB.north ||
+        boundsA.east < boundsB.west || boundsA.west > boundsB.east) {
+      return false;
+    }
+    
+    for (const vertex of polyA) {
+      if (this.isPointInPolygon(vertex[0], vertex[1], polyB)) {
+        return true;
+      }
+    }
+    
+    for (const vertex of polyB) {
+      if (this.isPointInPolygon(vertex[0], vertex[1], polyA)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  getPolygonBounds(polygon) {
+    let north = -90, south = 90, east = -180, west = 180;
+    
+    for (const vertex of polygon) {
+      const lat = vertex[0];
+      const lng = vertex[1];
+      
+      north = Math.max(north, lat);
+      south = Math.min(south, lat);
+      east = Math.max(east, lng);
+      west = Math.min(west, lng);
+    }
+    
+    return { north, south, east, west };
+  }
+
+  getZoneDescription(type) {
+    const descriptions = {
+      library: "Library and study area with books and computers",
+      lab: "Science and computer laboratories with research equipment",
+      classroom: "Lecture halls and classrooms for teaching",
+      admin: "Administrative offices and student services"
+    };
+    return descriptions[type] || "Campus section";
   }
 
   isInCampus(lat, lng) {
@@ -152,21 +223,7 @@ class CampusManager {
   }
 }
 
-const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality, isOnline) => {
-  const connectivityDot = `
-    <div style="
-      position: absolute;
-      bottom: -2px;
-      right: -2px;
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: ${isOnline ? '#10B981' : '#EF4444'};
-      border: 2px solid white;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-    "></div>
-  `;
-
+const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality) => {
   if (isMobile) {
     const pulseAnimation = isCurrentDevice ? `
       @keyframes pulse {
@@ -180,7 +237,7 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
       <div style="
         position: absolute;
         top: -5px;
-        left: -5px;
+        right: -5px;
         width: 12px;
         height: 12px;
         border-radius: 50%;
@@ -240,7 +297,6 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           "></div>
           
           ${qualityIndicator}
-          ${connectivityDot}
         </div>
       `,
       iconSize: [32, 32],
@@ -268,7 +324,6 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           left: 50%;
           transform: translate(-50%, -50%);
         "></div>
-        ${connectivityDot}
       </div>
     `,
     iconSize: [24, 24],
@@ -281,7 +336,6 @@ const getQualityColor = (quality) => {
     case 'excellent': return '#10B981';
     case 'good': return '#3B82F6';
     case 'moderate': return '#F59E0B';
-    case 'fair': return '#F97316';
     case 'poor': return '#EF4444';
     default: return '#6B7280';
   }
@@ -339,12 +393,63 @@ function MapController({ onUserInteraction }) {
   return null;
 }
 
-function StableMapUpdater({ devices, userInteracting, campusCenter }) {
+function InitialAutoCenter({ devices, campusBounds, onMapReady }) {
+  const map = useMap();
+  const hasCentered = useRef(false);
+
+  useEffect(() => {
+    if (!hasCentered.current && (devices.length > 0 || campusBounds)) {
+      let center, zoom;
+      
+      if (devices.length > 0) {
+        const validDevices = devices.filter(device => 
+          device.last_location && 
+          device.last_location.latitude && 
+          device.last_location.longitude
+        );
+
+        if (validDevices.length > 0) {
+          center = calculateMapCenter(validDevices);
+          zoom = calculateZoom(validDevices);
+        }
+      }
+      
+      if (!center && campusBounds) {
+        const [southWest, northEast] = campusBounds;
+        center = [
+          (southWest[0] + northEast[0]) / 2,
+          (southWest[1] + northEast[1]) / 2
+        ];
+        zoom = 19;
+      }
+
+      if (!center) {
+        center = [6.9271, 79.8612];
+        zoom = 19;
+      }
+
+      if (center) {
+        map.setView(center, zoom, {
+          animate: true,
+          duration: 1
+        });
+        hasCentered.current = true;
+        
+        if (onMapReady) {
+          onMapReady();
+        }
+      }
+    }
+  }, [devices, campusBounds, map, onMapReady]);
+
+  return null;
+}
+
+function StableMapUpdater({ devices, userInteracting, campusBounds }) {
   const map = useMap();
   const lastDeviceCount = useRef(0);
   const lastDevicePositions = useRef([]);
   const updateInProgress = useRef(false);
-  const currentZoom = useRef(null);
 
   useEffect(() => {
     if (userInteracting || updateInProgress.current) return;
@@ -363,18 +468,16 @@ function StableMapUpdater({ devices, userInteracting, campusCenter }) {
       const center = calculateMapCenter(validDevices);
       const zoom = calculateZoom(validDevices);
       
-      const currentMapZoom = map.getZoom();
-      const currentMapCenter = map.getCenter();
+      const currentZoom = map.getZoom();
+      const currentCenter = map.getCenter();
       
-      const zoomChanged = currentZoom.current === null || Math.abs(currentMapZoom - zoom) > 1;
-      const centerChanged = currentMapCenter.distanceTo(center) > 50;
+      const zoomChanged = Math.abs(currentZoom - zoom) > 0.5;
+      const centerChanged = currentCenter.distanceTo(center) > 50;
       
       if (zoomChanged || centerChanged) {
         map.flyTo(center, zoom, {
-          duration: 1.5,
-          easeLinearity: 0.25
+          duration: 1.5
         });
-        currentZoom.current = zoom;
       }
       
       lastDeviceCount.current = validDevices.length;
@@ -388,14 +491,12 @@ function StableMapUpdater({ devices, userInteracting, campusCenter }) {
         updateInProgress.current = false;
       }, 1000);
     }
-  }, [devices, userInteracting, map, campusCenter]);
+  }, [devices, userInteracting, map, campusBounds]);
 
   return null;
 }
 
-function CampusSectionsRenderer({ sections }) {
-  if (!sections || sections.length === 0) return null;
-
+function CampusSectionsRenderer({ sections, currentDeviceLocation }) {
   return (
     <>
       {sections.map((section) => (
@@ -405,9 +506,9 @@ function CampusSectionsRenderer({ sections }) {
           pathOptions={{
             color: section.color,
             fillColor: section.color,
-            fillOpacity: 0.25,
+            fillOpacity: 0.5,
             weight: 2,
-            opacity: 0.8
+            opacity: 0.9
           }}
         >
           <Popup>
@@ -416,6 +517,18 @@ function CampusSectionsRenderer({ sections }) {
               <p><strong>Type:</strong> <span className={`section-${section.type}`}>{section.type.toUpperCase()}</span></p>
               <p><strong>Description:</strong> {section.description}</p>
               <p><strong>Size:</strong> {section.width} × {section.height}</p>
+              {currentDeviceLocation && (
+                <p>
+                  <strong>Distance:</strong> {Math.round(
+                    new CampusManager().calculateDistance(
+                      currentDeviceLocation.lat,
+                      currentDeviceLocation.lng,
+                      section.coordinates[0][0],
+                      section.coordinates[0][1]
+                    )
+                  )} meters
+                </p>
+              )}
             </div>
           </Popup>
         </Polygon>
@@ -433,7 +546,7 @@ function CampusBoundaryRenderer({ campusBounds }) {
       pathOptions={{
         color: '#6366F1',
         fillColor: '#6366F1',
-        fillOpacity: 0.03,
+        fillOpacity: 0.05,
         weight: 3,
         opacity: 0.8,
         dashArray: '10, 10'
@@ -455,11 +568,8 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
   return (
     <>
       {devices.map((device, index) => {
-        if (!device.last_location) return null;
-        
         const currentSection = getCurrentSection(device);
         const gpsQuality = device.last_location?.gps_quality;
-        const isOnline = device.connectivity === 'online';
         
         return (
           <Marker
@@ -471,8 +581,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
               device.last_location.speed || 0,
               device.is_mobile,
               isCurrentDevice(device),
-              gpsQuality,
-              isOnline
+              gpsQuality
             )}
           >
             <Popup>
@@ -481,16 +590,11 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                 <div className="popup-details">
                   <div><strong>Type:</strong> {device.is_mobile ? '📱 Mobile' : '💻 Computer'}</div>
                   <div><strong>Status:</strong> {getStatusText(device)}</div>
-                  <div><strong>Connectivity:</strong> 
-                    <span style={{color: isOnline ? '#10B981' : '#EF4444', fontWeight: 'bold', marginLeft: '5px'}}>
-                      {isOnline ? '🟢 ONLINE' : '🔴 OFFLINE'}
-                    </span>
-                  </div>
                   {gpsQuality && (
                     <div>
                       <strong>GPS Quality:</strong> 
                       <span className={`gps-quality ${gpsQuality}`} style={{marginLeft: '5px'}}>
-                        {gpsQuality.toUpperCase()} ({device.last_location.accuracy ? `±${Math.round(device.last_location.accuracy)}m` : 'N/A'})
+                        {gpsQuality.toUpperCase()}
                       </span>
                     </div>
                   )}
@@ -516,7 +620,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                   )}
                   <div><strong>Coordinates:</strong> {device.last_location.latitude.toFixed(6)}, {device.last_location.longitude.toFixed(6)}</div>
                   {device.last_location.accuracy && (
-                    <div><strong>Accuracy:</strong> ±{Math.round(device.last_location.accuracy)} meters</div>
+                    <div><strong>Accuracy:</strong> ±{Math.round(device.last_location.accuracy)}m</div>
                   )}
                   {device.last_location.heading && (
                     <div><strong>Heading:</strong> {device.last_location.heading.toFixed(1)}°</div>
@@ -525,7 +629,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                     <div><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</div>
                   )}
                   {isCurrentDevice(device) && (
-                    <div><strong>📍 Current Device - Live High-Precision Tracking</strong></div>
+                    <div><strong>📍 Current Device - Live Tracking</strong></div>
                   )}
                 </div>
               </div>
@@ -541,7 +645,7 @@ const shouldUpdateMap = (currentDevices, lastPositions, lastCount) => {
   if (Math.abs(currentDevices.length - lastCount) > 0) return true;
   if (lastPositions.length === 0) return true;
 
-  const significantMoveThreshold = 0.000001; // More sensitive to movement
+  const significantMoveThreshold = 0.00001;
   
   for (const currentDevice of currentDevices) {
     const lastPosition = lastPositions.find(pos => pos.device_id === currentDevice.device_id);
@@ -561,7 +665,7 @@ const shouldUpdateMap = (currentDevices, lastPositions, lastCount) => {
 };
 
 const calculateMapCenter = (validDevices) => {
-  if (validDevices.length === 0) return [6.9271, 79.8612];
+  if (validDevices.length === 0) return null;
   if (validDevices.length === 1) {
     const device = validDevices[0];
     return [device.last_location.latitude, device.last_location.longitude];
@@ -577,28 +681,57 @@ const calculateMapCenter = (validDevices) => {
 };
 
 const calculateZoom = (validDevices) => {
-  if (validDevices.length <= 1) return 19;
-  if (validDevices.length === 2) return 18;
-  if (validDevices.length <= 5) return 17;
-  return 16;
+  if (validDevices.length <= 1) return 20;
+  if (validDevices.length === 2) return 19;
+  if (validDevices.length <= 5) return 18;
+  return 17;
 };
 
-const MapView = ({ devices, userLocation, campusCenter }) => {
+const MapView = ({ devices, userLocation }) => {
   const [userInteracting, setUserInteracting] = useState(false);
   const [campusManager, setCampusManager] = useState(null);
+  const [campusSections, setCampusSections] = useState([]);
+  const [campusBounds, setCampusBounds] = useState(null);
   const [mapReady, setMapReady] = useState(false);
 
+  const getFallbackLocation = () => {
+    if (devices.length > 0 && devices[0].last_location) {
+      return {
+        latitude: devices[0].last_location.latitude,
+        longitude: devices[0].last_location.longitude
+      };
+    }
+    return {
+      latitude: 6.9271,
+      longitude: 79.8612
+    };
+  };
+
   useEffect(() => {
-    const effectiveCampusCenter = campusCenter || { latitude: 6.9271, longitude: 79.8612 };
-    const manager = new CampusManager(effectiveCampusCenter);
-    setCampusManager(manager);
-  }, [campusCenter]);
+    const effectiveUserLocation = userLocation || getFallbackLocation();
+    
+    if (config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
+      try {
+        const manager = new CampusManager(effectiveUserLocation);
+        setCampusManager(manager);
+        setCampusSections(manager.sections);
+        setCampusBounds(manager.campusBounds);
+      } catch (error) {
+        console.error('Error creating campus sections:', error);
+      }
+    }
+  }, [userLocation, devices]);
 
   const validDevices = devices.filter(device => 
     device.last_location && 
     device.last_location.latitude && 
     device.last_location.longitude
   );
+
+  const currentDeviceLocation = validDevices.length > 0 ? {
+    lat: validDevices[0].last_location.latitude,
+    lng: validDevices[0].last_location.longitude
+  } : null;
 
   const handleUserInteraction = (interacting) => {
     setUserInteracting(interacting);
@@ -609,7 +742,6 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
   };
 
   const getMarkerColor = (device) => {
-    if (device.connectivity === 'offline') return '#6b7280';
     if (!device.last_updated) return '#6b7280';
     
     const lastUpdate = new Date(device.last_updated);
@@ -622,7 +754,6 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
   };
 
   const getStatusText = (device) => {
-    if (device.connectivity === 'offline') return 'Offline';
     if (!device.last_updated) return 'Offline';
     
     const lastUpdate = new Date(device.last_updated);
@@ -647,38 +778,42 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
   };
 
   const getInitialCenter = () => {
+    if (userLocation) {
+      return [userLocation.latitude, userLocation.longitude];
+    }
     if (validDevices.length > 0) {
       return [validDevices[0].last_location.latitude, validDevices[0].last_location.longitude];
     }
-    return campusCenter ? [campusCenter.latitude, campusCenter.longitude] : [6.9271, 79.8612];
+    return [6.9271, 79.8612];
   };
 
   return (
     <MapContainer
       center={getInitialCenter()}
-      zoom={18}
-      minZoom={15}
+      zoom={19}
+      minZoom={16}
       maxZoom={22}
       style={{ height: '100%', width: '100%' }}
       scrollWheelZoom={true}
       zoomControl={true}
       doubleClickZoom={true}
-      zoomSnap={0.1}
+      zoomSnap={0.5}
       zoomDelta={0.5}
       wheelPxPerZoomLevel={60}
       preferCanvas={true}
-      worldCopyJump={false}
-      inertia={true}
-      inertiaDeceleration={3000}
-      inertiaMaxSpeed={1500}
     >
+      <InitialAutoCenter 
+        devices={validDevices} 
+        campusBounds={campusBounds} 
+        onMapReady={handleMapReady}
+      />
       <MapController onUserInteraction={handleUserInteraction} />
       
       {mapReady && (
         <StableMapUpdater 
           devices={devices} 
           userInteracting={userInteracting} 
-          campusCenter={campusCenter}
+          campusBounds={campusBounds} 
         />
       )}
       
@@ -686,18 +821,19 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         maxZoom={22}
-        updateWhenIdle={false}
-        updateWhenZooming={true}
-        keepBuffer={2}
-        maxNativeZoom={19}
+        updateWhenIdle={true}
+        updateWhenZooming={false}
       />
 
-      {campusManager && campusManager.campusBounds && (
-        <CampusBoundaryRenderer campusBounds={campusManager.campusBounds} />
+      {campusBounds && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS && (
+        <CampusBoundaryRenderer campusBounds={campusBounds} />
       )}
       
-      {campusManager && campusManager.sections.length > 0 && (
-        <CampusSectionsRenderer sections={campusManager.sections} />
+      {campusSections.length > 0 && (
+        <CampusSectionsRenderer 
+          sections={campusSections} 
+          currentDeviceLocation={currentDeviceLocation}
+        />
       )}
       
       {validDevices.length > 0 && (
@@ -711,14 +847,16 @@ const MapView = ({ devices, userLocation, campusCenter }) => {
         />
       )}
 
-      {validDevices.length === 0 && campusManager && (
-        <Marker position={[campusManager.campusCenter.latitude, campusManager.campusCenter.longitude]}>
+      {validDevices.length === 0 && (
+        <Marker position={getInitialCenter()}>
           <Popup>
             <div className="popup-content">
-              <strong>University Campus</strong>
+              <strong>No Active Devices</strong>
               <div className="popup-details">
-                <p>Waiting for high-precision device location...</p>
-                <p><strong>Campus Ready:</strong> {campusManager.sections.length} properly separated sections</p>
+                <p>Waiting for device location updates...</p>
+                {campusSections.length > 0 && (
+                  <p><strong>Campus Ready:</strong> {campusSections.length} properly separated rectangular sections</p>
+                )}
               </div>
             </div>
           </Popup>
