@@ -40,61 +40,61 @@ class CampusManager {
   }
 
   generateCampusSections() {
-  if (!this.campusBounds) return [];
-  
-  const [southWest, northEast] = this.campusBounds;
-  const centerLat = (southWest[0] + northEast[0]) / 2;
-  const centerLng = (southWest[1] + northEast[1]) / 2;
-  
-  const baseSize = 0.0000225;
-  
-  const sections = [
-    {
-      id: 'library',
-      name: 'Library Section',
-      type: 'library',
-      color: '#3B82F6',
-      coordinates: this.generateRectangle(centerLat, centerLng, baseSize * 1.2, -baseSize * 1.2, baseSize * 2, baseSize * 1.8),
-      description: 'Library and study area with books and computers',
-      width: '5m',
-      height: '4.5m'
-    },
-    {
-      id: 'lab',
-      name: 'Laboratory Section',
-      type: 'lab',
-      color: '#10B981',
-      coordinates: this.generateRectangle(centerLat, centerLng, baseSize * 1.2, baseSize * 1.2, baseSize * 2.5, baseSize * 2),
-      description: 'Science and computer laboratories with research equipment',
-      width: '6m',
-      height: '5m'
-    },
-    {
-      id: 'classroom',
-      name: 'Classroom Section',
-      type: 'classroom',
-      color: '#F59E0B',
-      coordinates: this.generateRectangle(centerLat, centerLng, -baseSize * 1.2, -baseSize * 1.2, baseSize * 1.8, baseSize * 1.6),
-      description: 'Lecture halls and classrooms for teaching',
-      width: '4.5m',
-      height: '4m'
-    },
-    {
-      id: 'admin',
-      name: 'Administration Section',
-      type: 'admin',
-      color: '#EF4444',
-      coordinates: this.generateRectangle(centerLat, centerLng, -baseSize * 1.2, baseSize * 1.2, baseSize * 2, baseSize * 1.8),
-      description: 'Administrative offices and student services',
-      width: '5m',
-      height: '4.5m'
-    }
-  ];
+    if (!this.campusBounds) return [];
+    
+    const [southWest, northEast] = this.campusBounds;
+    const centerLat = (southWest[0] + northEast[0]) / 2;
+    const centerLng = (southWest[1] + northEast[1]) / 2;
+    
+    const baseSize = 0.0000225;
+    
+    const sections = [
+      {
+        id: 'library',
+        name: 'Library Section',
+        type: 'library',
+        color: '#3B82F6',
+        coordinates: this.generateRectangle(centerLat, centerLng, baseSize * 1.2, -baseSize * 1.2, baseSize * 2, baseSize * 1.8),
+        description: 'Library and study area with books and computers',
+        width: '5m',
+        height: '4.5m'
+      },
+      {
+        id: 'lab',
+        name: 'Laboratory Section',
+        type: 'lab',
+        color: '#10B981',
+        coordinates: this.generateRectangle(centerLat, centerLng, baseSize * 1.2, baseSize * 1.2, baseSize * 2.5, baseSize * 2),
+        description: 'Science and computer laboratories with research equipment',
+        width: '6m',
+        height: '5m'
+      },
+      {
+        id: 'classroom',
+        name: 'Classroom Section',
+        type: 'classroom',
+        color: '#F59E0B',
+        coordinates: this.generateRectangle(centerLat, centerLng, -baseSize * 1.2, -baseSize * 1.2, baseSize * 1.8, baseSize * 1.6),
+        description: 'Lecture halls and classrooms for teaching',
+        width: '4.5m',
+        height: '4m'
+      },
+      {
+        id: 'admin',
+        name: 'Administration Section',
+        type: 'admin',
+        color: '#EF4444',
+        coordinates: this.generateRectangle(centerLat, centerLng, -baseSize * 1.2, baseSize * 1.2, baseSize * 2, baseSize * 1.8),
+        description: 'Administrative offices and student services',
+        width: '5m',
+        height: '4.5m'
+      }
+    ];
 
-  this.verifyNoOverlaps(sections);
-  
-  return sections;
-}
+    this.verifyNoOverlaps(sections);
+    
+    return sections;
+  }
 
   generateRectangle(centerLat, centerLng, offsetLat, offsetLng, width, height) {
     const lat = centerLat + offsetLat;
@@ -223,11 +223,34 @@ class CampusManager {
   }
 }
 
-const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice) => {
+const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality) => {
   if (isMobile) {
+    const pulseAnimation = isCurrentDevice ? `
+      @keyframes pulse {
+        0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.7; }
+        100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+      }
+    ` : '';
+
+    const qualityIndicator = gpsQuality ? `
+      <div style="
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: ${getQualityColor(gpsQuality)};
+        border: 2px solid white;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      "></div>
+    ` : '';
+
     return L.divIcon({
       className: 'custom-direction-icon',
       html: `
+        <style>${pulseAnimation}</style>
         <div style="
           position: relative;
           width: 32px;
@@ -272,6 +295,8 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
             border-radius: 50%;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
           "></div>
+          
+          ${qualityIndicator}
         </div>
       `,
       iconSize: [32, 32],
@@ -304,6 +329,16 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
     iconSize: [24, 24],
     iconAnchor: [12, 12],
   });
+};
+
+const getQualityColor = (quality) => {
+  switch(quality) {
+    case 'excellent': return '#10B981';
+    case 'good': return '#3B82F6';
+    case 'moderate': return '#F59E0B';
+    case 'poor': return '#EF4444';
+    default: return '#6B7280';
+  }
 };
 
 function MapController({ onUserInteraction }) {
@@ -534,6 +569,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
     <>
       {devices.map((device, index) => {
         const currentSection = getCurrentSection(device);
+        const gpsQuality = device.last_location?.gps_quality;
         
         return (
           <Marker
@@ -544,7 +580,8 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
               device.last_location.heading || 0,
               device.last_location.speed || 0,
               device.is_mobile,
-              isCurrentDevice(device)
+              isCurrentDevice(device),
+              gpsQuality
             )}
           >
             <Popup>
@@ -553,6 +590,14 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                 <div className="popup-details">
                   <div><strong>Type:</strong> {device.is_mobile ? '📱 Mobile' : '💻 Computer'}</div>
                   <div><strong>Status:</strong> {getStatusText(device)}</div>
+                  {gpsQuality && (
+                    <div>
+                      <strong>GPS Quality:</strong> 
+                      <span className={`gps-quality ${gpsQuality}`} style={{marginLeft: '5px'}}>
+                        {gpsQuality.toUpperCase()}
+                      </span>
+                    </div>
+                  )}
                   {currentSection && (
                     <div>
                       <strong>Location:</strong> {currentSection.name}
@@ -577,8 +622,14 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                   {device.last_location.accuracy && (
                     <div><strong>Accuracy:</strong> ±{Math.round(device.last_location.accuracy)}m</div>
                   )}
+                  {device.last_location.heading && (
+                    <div><strong>Heading:</strong> {device.last_location.heading.toFixed(1)}°</div>
+                  )}
+                  {device.last_location.speed > 0 && (
+                    <div><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</div>
+                  )}
                   {isCurrentDevice(device) && (
-                    <div><strong>📍 Current Device</strong></div>
+                    <div><strong>📍 Current Device - Live Tracking</strong></div>
                   )}
                 </div>
               </div>
