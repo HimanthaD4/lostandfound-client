@@ -1,17 +1,20 @@
-// config.js - FIXED VERSION
+const getApiBaseUrl = () => {
+  return 'https://device-tracker-server.onrender.com/api';
+};
+
 const config = {
-  // Always use the Render backend URL - remove localhost completely
-  API_BASE_URL: 'https://device-tracker-server.onrender.com/api',
+  API_BASE_URL: getApiBaseUrl(),
   
-  // Campus Configuration
   CAMPUS_SETTINGS: {
     AUTO_CREATE_CAMPUS: true,
-    CAMPUS_WIDTH: 0.00018,
-    CAMPUS_HEIGHT: 0.00018,
-    SECTIONS: []
+    CAMPUS_WIDTH: 0.00018, 
+    CAMPUS_HEIGHT: 0.00018, 
+    SECTIONS: [
+    
+    ]
   }
 };
 
 console.log('API Base URL:', config.API_BASE_URL);
-console.log('Environment:', process.env.NODE_ENV);
+console.log('Campus Settings:', config.CAMPUS_SETTINGS);
 export default config;
