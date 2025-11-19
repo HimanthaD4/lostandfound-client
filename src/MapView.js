@@ -1,862 +1,110 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Rectangle } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
-import config from './config';
-
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
-
-class CampusManager {
-  constructor(userLocation) {
-    this.userLocation = userLocation;
-    this.campusBounds = this.generateCampusBounds();
-    this.sections = this.generateCampusSections();
-  }
-
-  generateCampusBounds() {
-    if (!this.userLocation) {
-      this.userLocation = { latitude: 6.9271, longitude: 79.8612 };
-    }
-    
-    const { latitude, longitude } = this.userLocation;
-    const { CAMPUS_WIDTH, CAMPUS_HEIGHT } = config.CAMPUS_SETTINGS;
-    
-    const southWest = [
-      latitude - (CAMPUS_HEIGHT / 2),
-      longitude - (CAMPUS_WIDTH / 2)
-    ];
-    
-    const northEast = [
-      latitude + (CAMPUS_HEIGHT / 2),
-      longitude + (CAMPUS_WIDTH / 2)
-    ];
-    
-    return [southWest, northEast];
-  }
-
-  generateCampusSections() {
-    if (!this.campusBounds) return [];
-    
-    const [southWest, northEast] = this.campusBounds;
-    const centerLat = (southWest[0] + northEast[0]) / 2;
-    const centerLng = (southWest[1] + northEast[1]) / 2;
-    
-    const baseSize = 0.0000225;
-    
-    const sections = [
-      {
-        id: 'library',
-        name: 'Library Section',
-        type: 'library',
-        color: '#3B82F6',
-        coordinates: this.generateRectangle(centerLat, centerLng, baseSize * 1.2, -baseSize * 1.2, baseSize * 2, baseSize * 1.8),
-        description: 'Library and study area with books and computers',
-        width: '5m',
-        height: '4.5m'
-      },
-      {
-        id: 'lab',
-        name: 'Laboratory Section',
-        type: 'lab',
-        color: '#10B981',
-        coordinates: this.generateRectangle(centerLat, centerLng, baseSize * 1.2, baseSize * 1.2, baseSize * 2.5, baseSize * 2),
-        description: 'Science and computer laboratories with research equipment',
-        width: '6m',
-        height: '5m'
-      },
-      {
-        id: 'classroom',
-        name: 'Classroom Section',
-        type: 'classroom',
-        color: '#F59E0B',
-        coordinates: this.generateRectangle(centerLat, centerLng, -baseSize * 1.2, -baseSize * 1.2, baseSize * 1.8, baseSize * 1.6),
-        description: 'Lecture halls and classrooms for teaching',
-        width: '4.5m',
-        height: '4m'
-      },
-      {
-        id: 'admin',
-        name: 'Administration Section',
-        type: 'admin',
-        color: '#EF4444',
-        coordinates: this.generateRectangle(centerLat, centerLng, -baseSize * 1.2, baseSize * 1.2, baseSize * 2, baseSize * 1.8),
-        description: 'Administrative offices and student services',
-        width: '5m',
-        height: '4.5m'
-      }
-    ];
-
-    this.verifyNoOverlaps(sections);
-    
-    return sections;
-  }
-
-  generateRectangle(centerLat, centerLng, offsetLat, offsetLng, width, height) {
-    const lat = centerLat + offsetLat;
-    const lng = centerLng + offsetLng;
-    
-    return [
-      [lat - height/2, lng - width/2],
-      [lat - height/2, lng + width/2],
-      [lat + height/2, lng + width/2],
-      [lat + height/2, lng - width/2],
-      [lat - height/2, lng - width/2]
-    ];
-  }
-
-  verifyNoOverlaps(sections) {
-    let hasOverlaps = false;
-    
-    for (let i = 0; i < sections.length; i++) {
-      for (let j = i + 1; j < sections.length; j++) {
-        const sectionA = sections[i];
-        const sectionB = sections[j];
-        
-        if (this.doPolygonsOverlap(sectionA.coordinates, sectionB.coordinates)) {
-          hasOverlaps = true;
-        }
-      }
-    }
-    
-    return !hasOverlaps;
-  }
-
-  doPolygonsOverlap(polyA, polyB) {
-    const boundsA = this.getPolygonBounds(polyA);
-    const boundsB = this.getPolygonBounds(polyB);
-    
-    if (boundsA.north < boundsB.south || boundsA.south > boundsB.north ||
-        boundsA.east < boundsB.west || boundsA.west > boundsB.east) {
-      return false;
-    }
-    
-    for (const vertex of polyA) {
-      if (this.isPointInPolygon(vertex[0], vertex[1], polyB)) {
-        return true;
-      }
-    }
-    
-    for (const vertex of polyB) {
-      if (this.isPointInPolygon(vertex[0], vertex[1], polyA)) {
-        return true;
-      }
-    }
-    
-    return false;
-  }
-
-  getPolygonBounds(polygon) {
-    let north = -90, south = 90, east = -180, west = 180;
-    
-    for (const vertex of polygon) {
-      const lat = vertex[0];
-      const lng = vertex[1];
-      
-      north = Math.max(north, lat);
-      south = Math.min(south, lat);
-      east = Math.max(east, lng);
-      west = Math.min(west, lng);
-    }
-    
-    return { north, south, east, west };
-  }
-
-  getZoneDescription(type) {
-    const descriptions = {
-      library: "Library and study area with books and computers",
-      lab: "Science and computer laboratories with research equipment",
-      classroom: "Lecture halls and classrooms for teaching",
-      admin: "Administrative offices and student services"
-    };
-    return descriptions[type] || "Campus section";
-  }
-
-  isInCampus(lat, lng) {
-    if (!this.campusBounds) return false;
-    
-    const [southWest, northEast] = this.campusBounds;
-    return (
-      lat >= southWest[0] && 
-      lat <= northEast[0] && 
-      lng >= southWest[1] && 
-      lng <= northEast[1]
-    );
-  }
-
-  getCurrentSection(lat, lng) {
-    for (const section of this.sections) {
-      if (this.isPointInPolygon(lat, lng, section.coordinates)) {
-        return section;
-      }
-    }
-    return null;
-  }
-
-  isPointInPolygon(lat, lng, polygon) {
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      const xi = polygon[i][1], yi = polygon[i][0];
-      const xj = polygon[j][1], yj = polygon[j][0];
-      
-      const intersect = ((yi > lng) !== (yj > lng)) &&
-          (lat < (xj - xi) * (lng - yi) / (yj - yi) + xi);
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  }
-
-  calculateDistance(lat1, lng1, lat2, lng2) {
-    const R = 6371000;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLng/2) * Math.sin(dLng/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  }
-}
-
-const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality) => {
-  if (isMobile) {
-    const pulseAnimation = isCurrentDevice ? `
-      @keyframes pulse {
-        0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-        50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.7; }
-        100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-      }
-    ` : '';
-
-    const qualityIndicator = gpsQuality ? `
-      <div style="
-        position: absolute;
-        top: -5px;
-        right: -5px;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        background: ${getQualityColor(gpsQuality)};
-        border: 2px solid white;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-      "></div>
-    ` : '';
-
-    return L.divIcon({
-      className: 'custom-direction-icon',
-      html: `
-        <style>${pulseAnimation}</style>
-        <div style="
-          position: relative;
-          width: 32px;
-          height: 32px;
-        ">
-          ${isCurrentDevice ? `
-            <div style="
-              position: absolute;
-              top: 50%;
-              left: 50%;
-              transform: translate(-50%, -50%);
-              width: 36px;
-              height: 36px;
-              border: 2px solid #2563eb;
-              border-radius: 50%;
-              animation: pulse 2s infinite;
-            "></div>
-          ` : ''}
-          
-          <div style="
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%) rotate(${heading || 0}deg);
-            width: 0;
-            height: 0;
-            border-left: 6px solid transparent;
-            border-right: 6px solid transparent;
-            border-bottom: 12px solid ${color};
-            filter: drop-shadow(0 2px 2px rgba(0,0,0,0.2));
-          "></div>
-          
-          <div style="
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 8px;
-            height: 8px;
-            background: ${color};
-            border: 2px solid white;
-            border-radius: 50%;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-          "></div>
-          
-          ${qualityIndicator}
-        </div>
-      `,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
-    });
-  }
-
-  return L.divIcon({
-    className: 'computer-device-icon',
-    html: `
-      <div style="
-        position: relative;
-        width: 24px;
-        height: 24px;
-      ">
-        <div style="
-          width: 20px;
-          height: 20px;
-          background: ${color};
-          border: 2px solid white;
-          border-radius: 50%;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-        "></div>
-      </div>
-    `,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-  });
-};
-
-const getQualityColor = (quality) => {
-  switch(quality) {
-    case 'excellent': return '#10B981';
-    case 'good': return '#3B82F6';
-    case 'moderate': return '#F59E0B';
-    case 'poor': return '#EF4444';
-    default: return '#6B7280';
-  }
-};
-
-function MapController({ onUserInteraction }) {
-  const map = useMap();
-  const userInteracting = useRef(false);
-  const interactionTimer = useRef(null);
-
-  useEffect(() => {
-    const handleInteractionStart = () => {
-      userInteracting.current = true;
-      onUserInteraction(true);
-      
-      if (interactionTimer.current) {
-        clearTimeout(interactionTimer.current);
-      }
-    };
-
-    const handleInteractionEnd = () => {
-      interactionTimer.current = setTimeout(() => {
-        userInteracting.current = false;
-        onUserInteraction(false);
-      }, 3000);
-    };
-
-    map.on('movestart', handleInteractionStart);
-    map.on('dragstart', handleInteractionStart);
-    map.on('zoomstart', handleInteractionStart);
-    map.on('mousedown', handleInteractionStart);
-    
-    map.on('moveend', handleInteractionEnd);
-    map.on('dragend', handleInteractionEnd);
-    map.on('zoomend', handleInteractionEnd);
-    map.on('mouseup', handleInteractionEnd);
-
-    return () => {
-      map.off('movestart', handleInteractionStart);
-      map.off('dragstart', handleInteractionStart);
-      map.off('zoomstart', handleInteractionStart);
-      map.off('mousedown', handleInteractionStart);
-      
-      map.off('moveend', handleInteractionEnd);
-      map.off('dragend', handleInteractionEnd);
-      map.off('zoomend', handleInteractionEnd);
-      map.off('mouseup', handleInteractionEnd);
-      
-      if (interactionTimer.current) {
-        clearTimeout(interactionTimer.current);
-      }
-    };
-  }, [map, onUserInteraction]);
-
-  return null;
-}
-
-function InitialAutoCenter({ devices, campusBounds, onMapReady }) {
-  const map = useMap();
-  const hasCentered = useRef(false);
-
-  useEffect(() => {
-    if (!hasCentered.current && (devices.length > 0 || campusBounds)) {
-      let center, zoom;
-      
-      if (devices.length > 0) {
-        const validDevices = devices.filter(device => 
-          device.last_location && 
-          device.last_location.latitude && 
-          device.last_location.longitude
-        );
-
-        if (validDevices.length > 0) {
-          center = calculateMapCenter(validDevices);
-          zoom = calculateZoom(validDevices);
-        }
-      }
-      
-      if (!center && campusBounds) {
-        const [southWest, northEast] = campusBounds;
-        center = [
-          (southWest[0] + northEast[0]) / 2,
-          (southWest[1] + northEast[1]) / 2
-        ];
-        zoom = 19;
-      }
-
-      if (!center) {
-        center = [6.9271, 79.8612];
-        zoom = 19;
-      }
-
-      if (center) {
-        map.setView(center, zoom, {
-          animate: true,
-          duration: 1
-        });
-        hasCentered.current = true;
-        
-        if (onMapReady) {
-          onMapReady();
-        }
-      }
-    }
-  }, [devices, campusBounds, map, onMapReady]);
-
-  return null;
-}
-
-// FIXED: StationaryMapUpdater - Only updates individual device markers, never moves the map
-function StationaryMapUpdater({ devices, userInteracting }) {
-  const map = useMap();
-  const lastDevicePositions = useRef(new Map());
-  const updateInProgress = useRef(false);
-
-  useEffect(() => {
-    // Don't do anything if user is interacting or update is in progress
-    if (userInteracting || updateInProgress.current) {
-      return;
-    }
-
-    const validDevices = devices.filter(device => 
-      device.last_location && 
-      device.last_location.latitude && 
-      device.last_location.longitude
-    );
-
-    // Only update individual device markers, never move the map
-    validDevices.forEach(device => {
-      const deviceId = device.device_id;
-      const currentPosition = {
-        lat: device.last_location.latitude,
-        lng: device.last_location.longitude
-      };
-      
-      const lastPosition = lastDevicePositions.current.get(deviceId);
-      
-      // Update marker position only if device actually moved significantly
-      if (!lastPosition || 
-          Math.abs(currentPosition.lat - lastPosition.lat) > 0.00001 || 
-          Math.abs(currentPosition.lng - lastPosition.lng) > 0.00001) {
-        
-        // The marker will update automatically through React re-render
-        // We just track the position changes here
-        lastDevicePositions.current.set(deviceId, currentPosition);
-      }
-    });
-
-    // Remove positions for devices that are no longer in the list
-    const currentDeviceIds = new Set(validDevices.map(d => d.device_id));
-    lastDevicePositions.current.forEach((position, deviceId) => {
-      if (!currentDeviceIds.has(deviceId)) {
-        lastDevicePositions.current.delete(deviceId);
-      }
-    });
-
-  }, [devices, userInteracting, map]);
-
-  return null;
-}
-
-function CampusSectionsRenderer({ sections, currentDeviceLocation }) {
-  return (
-    <>
-      {sections.map((section) => (
-        <Polygon
-          key={section.id}
-          positions={section.coordinates}
-          pathOptions={{
-            color: section.color,
-            fillColor: section.color,
-            fillOpacity: 0.5,
-            weight: 2,
-            opacity: 0.9
-          }}
-        >
-          <Popup>
-            <div className="campus-section-popup">
-              <h4>🏢 {section.name}</h4>
-              <p><strong>Type:</strong> <span className={`section-${section.type}`}>{section.type.toUpperCase()}</span></p>
-              <p><strong>Description:</strong> {section.description}</p>
-              <p><strong>Size:</strong> {section.width} × {section.height}</p>
-              {currentDeviceLocation && (
-                <p>
-                  <strong>Distance:</strong> {Math.round(
-                    new CampusManager().calculateDistance(
-                      currentDeviceLocation.lat,
-                      currentDeviceLocation.lng,
-                      section.coordinates[0][0],
-                      section.coordinates[0][1]
-                    )
-                  )} meters
-                </p>
-              )}
-            </div>
-          </Popup>
-        </Polygon>
-      ))}
-    </>
-  );
-}
-
-function CampusBoundaryRenderer({ campusBounds }) {
-  if (!campusBounds) return null;
-
-  return (
-    <Rectangle
-      bounds={campusBounds}
-      pathOptions={{
-        color: '#6366F1',
-        fillColor: '#6366F1',
-        fillOpacity: 0.05,
-        weight: 3,
-        opacity: 0.8,
-        dashArray: '10, 10'
-      }}
-    >
-      <Popup>
-        <div className="campus-section-popup">
-          <h4>🏫 University Campus</h4>
-          <p><strong>Main Campus Area</strong></p>
-          <p><strong>Dimensions:</strong> 20m × 20m</p>
-          <p><strong>Sections:</strong> 4 properly separated rectangular sections</p>
-        </div>
-      </Popup>
-    </Rectangle>
-  );
-}
-
-// In MapView.js, update the StableDevicesRenderer component:
-
-function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection }) {
-  return (
-    <>
-      {devices.map((device, index) => {
-        // CRITICAL FIX: Only render devices with valid, device-specific location data
-        if (!device.last_location || !device.last_location.latitude || !device.last_location.longitude) {
-          return null;
-        }
-
-        const currentSection = getCurrentSection(device);
-        const gpsQuality = device.last_location?.gps_quality;
-        
-        return (
-          <Marker
-            key={`${device.device_id}-${device.last_location.timestamp || index}`} // Use timestamp for unique key
-            position={[device.last_location.latitude, device.last_location.longitude]}
-            icon={createAdvancedDirectionalIcon(
-              getMarkerColor(device), 
-              device.last_location.heading || 0,
-              device.last_location.speed || 0,
-              device.is_mobile,
-              isCurrentDevice(device),
-              gpsQuality
-            )}
-          >
-            <Popup>
-              <div className="popup-content">
-                <strong>{device.device_name || `Device ${index + 1}`}</strong>
-                <div className="popup-details">
-                  <div><strong>Device ID:</strong> {device.device_id.slice(0, 8)}...</div>
-                  <div><strong>Type:</strong> {device.is_mobile ? '📱 Mobile' : '💻 Laptop'}</div>
-                  <div><strong>Status:</strong> {getStatusText(device)}</div>
-                  {gpsQuality && (
-                    <div>
-                      <strong>GPS Quality:</strong> 
-                      <span className={`gps-quality ${gpsQuality}`} style={{marginLeft: '5px'}}>
-                        {gpsQuality.toUpperCase()}
-                      </span>
-                    </div>
-                  )}
-                  {currentSection && (
-                    <div>
-                      <strong>Location:</strong> {currentSection.name}
-                      <span style={{color: currentSection.color, fontWeight: 'bold'}}> • {currentSection.type.toUpperCase()}</span>
-                      <br/>
-                      <small>Inside {currentSection.width} × {currentSection.height} section</small>
-                    </div>
-                  )}
-                  {!currentSection && campusManager && campusManager.isInCampus(
-                    device.last_location.latitude, 
-                    device.last_location.longitude
-                  ) && (
-                    <div><strong>Location:</strong> On Campus (Between sections)</div>
-                  )}
-                  {!currentSection && campusManager && !campusManager.isInCampus(
-                    device.last_location.latitude, 
-                    device.last_location.longitude
-                  ) && (
-                    <div><strong>Location:</strong> Outside Campus</div>
-                  )}
-                  <div><strong>Coordinates:</strong> {device.last_location.latitude.toFixed(6)}, {device.last_location.longitude.toFixed(6)}</div>
-                  {device.last_location.accuracy && (
-                    <div><strong>Accuracy:</strong> ±{Math.round(device.last_location.accuracy)}m</div>
-                  )}
-                  {device.last_location.heading && (
-                    <div><strong>Heading:</strong> {device.last_location.heading.toFixed(1)}°</div>
-                  )}
-                  {device.last_location.speed > 0 && (
-                    <div><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</div>
-                  )}
-                  {device.last_location.source && (
-                    <div><strong>Source:</strong> {device.last_location.source}</div>
-                  )}
-                  {isCurrentDevice(device) && (
-                    <div><strong>📍 Current Device - Live Tracking</strong></div>
-                  )}
-                  {!isCurrentDevice(device) && (
-                    <div><strong>📍 Additional Device - Independent Tracking</strong></div>
-                  )}
-                </div>
-              </div>
-            </Popup>
-          </Marker>
-        );
-      })}
-    </>
-  );
-}
-
-const calculateMapCenter = (validDevices) => {
-  if (validDevices.length === 0) return null;
-  if (validDevices.length === 1) {
-    const device = validDevices[0];
-    return [device.last_location.latitude, device.last_location.longitude];
-  }
-  
-  const lats = validDevices.map(d => d.last_location.latitude);
-  const lons = validDevices.map(d => d.last_location.longitude);
-  
-  const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
-  const centerLon = (Math.min(...lons) + Math.max(...lons)) / 2;
-  
-  return [centerLat, centerLon];
-};
-
-const calculateZoom = (validDevices) => {
-  if (validDevices.length <= 1) return 19;
-  if (validDevices.length === 2) return 18;
-  if (validDevices.length <= 5) return 17;
-  return 16;
-};
+import React from 'react';
 
 const MapView = ({ devices, userLocation }) => {
-  const [userInteracting, setUserInteracting] = useState(false);
-  const [campusManager, setCampusManager] = useState(null);
-  const [campusSections, setCampusSections] = useState([]);
-  const [campusBounds, setCampusBounds] = useState(null);
-  const [mapReady, setMapReady] = useState(false);
-  const [campusGenerated, setCampusGenerated] = useState(false);
-
-  const getFallbackLocation = () => {
-    if (devices.length > 0 && devices[0].last_location) {
-      return {
-        latitude: devices[0].last_location.latitude,
-        longitude: devices[0].last_location.longitude
-      };
+  const styles = {
+    container: {
+      height: '400px',
+      background: 'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)',
+      borderRadius: '10px',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'white',
+      position: 'relative',
+      overflow: 'hidden'
+    },
+    deviceMarker: {
+      position: 'absolute',
+      width: '12px',
+      height: '12px',
+      background: '#00b894',
+      border: '2px solid white',
+      borderRadius: '50%',
+      transform: 'translate(-50%, -50%)'
+    },
+    campusZone: {
+      position: 'absolute',
+      border: '2px dashed rgba(255,255,255,0.5)',
+      background: 'rgba(255,255,255,0.1)'
     }
-    return {
-      latitude: 6.9271,
-      longitude: 79.8612
-    };
   };
 
-  useEffect(() => {
-    if (!campusGenerated && devices.length > 0 && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
-      const effectiveUserLocation = userLocation || getFallbackLocation();
-      
-      try {
-        const manager = new CampusManager(effectiveUserLocation);
-        setCampusManager(manager);
-        setCampusSections(manager.sections);
-        setCampusBounds(manager.campusBounds);
-        setCampusGenerated(true);
-        console.log('🎓 Campus generated based on first device location');
-      } catch (error) {
-        console.error('Error creating campus sections:', error);
-      }
-    }
-  }, [devices, userLocation, campusGenerated]);
-
-  const validDevices = devices.filter(device => 
-    device.last_location && 
-    device.last_location.latitude && 
-    device.last_location.longitude
-  );
-
-  const currentDeviceLocation = validDevices.length > 0 ? {
-    lat: validDevices[0].last_location.latitude,
-    lng: validDevices[0].last_location.longitude
-  } : null;
-
-  const handleUserInteraction = (interacting) => {
-    setUserInteracting(interacting);
-  };
-
-  const handleMapReady = () => {
-    setMapReady(true);
-  };
-
-  const getMarkerColor = (device) => {
-    if (!device.last_updated) return '#6b7280';
-    
-    const lastUpdate = new Date(device.last_updated);
-    const now = new Date();
-    const diffSeconds = (now - lastUpdate) / 1000;
-    
-    if (diffSeconds > 30) return '#dc2626';
-    if (diffSeconds > 15) return '#d97706';
-    return '#059669';
-  };
-
-  const getStatusText = (device) => {
-    if (!device.last_updated) return 'Offline';
-    
-    const lastUpdate = new Date(device.last_updated);
-    const now = new Date();
-    const diffSeconds = (now - lastUpdate) / 1000;
-    
-    if (diffSeconds > 30) return 'Offline';
-    if (diffSeconds > 15) return 'Stale';
-    return 'Live';
-  };
-
-  const isCurrentDevice = (device) => {
-    return device.is_mobile && device.last_location?.speed !== undefined;
-  };
-
-  const getCurrentSection = (device) => {
-    if (!campusManager || !device.last_location) return null;
-    return campusManager.getCurrentSection(
-      device.last_location.latitude,
-      device.last_location.longitude
-    );
-  };
-
-  const getInitialCenter = () => {
-    if (userLocation) {
-      return [userLocation.latitude, userLocation.longitude];
-    }
-    if (validDevices.length > 0) {
-      return [validDevices[0].last_location.latitude, validDevices[0].last_location.longitude];
-    }
-    return [6.9271, 79.8612];
-  };
+  // Simple campus zones
+  const campusZones = [
+    { id: 'library', name: 'Library', top: '30%', left: '25%', width: '20%', height: '15%', color: '#3498db' },
+    { id: 'lab', name: 'Lab', top: '30%', left: '55%', width: '20%', height: '15%', color: '#2ecc71' },
+    { id: 'classroom', name: 'Classroom', top: '60%', left: '25%', width: '20%', height: '15%', color: '#f39c12' },
+    { id: 'admin', name: 'Admin', top: '60%', left: '55%', width: '20%', height: '15%', color: '#e74c3c' }
+  ];
 
   return (
-    <MapContainer
-      center={getInitialCenter()}
-      zoom={19}
-      minZoom={15}
-      maxZoom={22}
-      style={{ height: '100%', width: '100%' }}
-      scrollWheelZoom={true}
-      zoomControl={true}
-      doubleClickZoom={true}
-      zoomSnap={0.5}
-      zoomDelta={0.5}
-      wheelPxPerZoomLevel={120}
-      preferCanvas={true}
-    >
-      <InitialAutoCenter 
-        devices={validDevices} 
-        campusBounds={campusBounds} 
-        onMapReady={handleMapReady}
-      />
-      <MapController onUserInteraction={handleUserInteraction} />
+    <div style={styles.container}>
+      <h3 style={{margin: '0 0 20px 0', textAlign: 'center'}}>
+        Live Device Locations ({devices.filter(d => d.last_location).length} active)
+      </h3>
       
-      {mapReady && (
-        <StationaryMapUpdater 
-          devices={devices} 
-          userInteracting={userInteracting}
-        />
-      )}
+      {/* Campus Zones */}
+      {campusZones.map(zone => (
+        <div
+          key={zone.id}
+          style={{
+            ...styles.campusZone,
+            top: zone.top,
+            left: zone.left,
+            width: zone.width,
+            height: zone.height,
+            borderColor: zone.color
+          }}
+        >
+          <div style={{
+            position: 'absolute',
+            top: '-25px',
+            left: '0',
+            fontSize: '12px',
+            color: zone.color,
+            fontWeight: 'bold'
+          }}>
+            {zone.name}
+          </div>
+        </div>
+      ))}
       
-      <TileLayer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        maxZoom={22}
-        updateWhenIdle={true}
-        updateWhenZooming={false}
-      />
-
-      {campusBounds && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS && campusGenerated && (
-        <CampusBoundaryRenderer campusBounds={campusBounds} />
-      )}
+      {/* Device Markers */}
+      {devices.filter(device => device.last_location).map((device, index) => {
+        // Simple positioning based on device ID hash
+        const position = {
+          top: `${30 + (parseInt(device.device_id.slice(0, 8), 16) % 40)}%`,
+          left: `${20 + (parseInt(device.device_id.slice(8, 16), 16) % 60)}%`
+        };
+        
+        return (
+          <div
+            key={device.device_id}
+            style={{
+              ...styles.deviceMarker,
+              ...position,
+              background: device.is_mobile ? '#e74c3c' : '#3498db'
+            }}
+            title={`${device.device_name} - ${device.is_mobile ? 'Mobile' : 'Laptop'}`}
+          />
+        );
+      })}
       
-      {campusSections.length > 0 && campusGenerated && (
-        <CampusSectionsRenderer 
-          sections={campusSections} 
-          currentDeviceLocation={currentDeviceLocation}
-        />
-      )}
-      
-      {validDevices.length > 0 && (
-        <StableDevicesRenderer
-          devices={validDevices}
-          campusManager={campusManager}
-          getMarkerColor={getMarkerColor}
-          getStatusText={getStatusText}
-          isCurrentDevice={isCurrentDevice}
-          getCurrentSection={getCurrentSection}
-        />
-      )}
-
-      {validDevices.length === 0 && (
-        <Marker position={getInitialCenter()}>
-          <Popup>
-            <div className="popup-content">
-              <strong>No Active Devices</strong>
-              <div className="popup-details">
-                <p>Waiting for device location updates...</p>
-                {campusGenerated && (
-                  <p><strong>Campus Ready:</strong> {campusSections.length} properly separated rectangular sections</p>
-                )}
-              </div>
-            </div>
-          </Popup>
-        </Marker>
-      )}
-    </MapContainer>
+      <div style={{
+        position: 'absolute',
+        bottom: '10px',
+        left: '10px',
+        background: 'rgba(0,0,0,0.7)',
+        padding: '10px',
+        borderRadius: '5px',
+        fontSize: '12px'
+      }}>
+        <div>📱 Mobile Devices: {devices.filter(d => d.is_mobile).length}</div>
+        <div>💻 Laptop Devices: {devices.filter(d => !d.is_mobile).length}</div>
+        <div>📍 Active Tracking: {devices.filter(d => d.last_location).length}</div>
+      </div>
+    </div>
   );
 };
 

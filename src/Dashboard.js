@@ -1,110 +1,46 @@
 import React, { useState, useEffect, useRef } from 'react';
-import MapView from './MapView';
 import { apiRequest } from './App';
-import config from './config';
 
 const Dashboard = ({ user, onLogout }) => {
   const [devices, setDevices] = useState([]);
-  const [alerts, setAlerts] = useState([]);
   const [currentDeviceId, setCurrentDeviceId] = useState(null);
   const [locationStatus, setLocationStatus] = useState('initializing');
   const [userLocation, setUserLocation] = useState(null);
   const locationWatcherRef = useRef(null);
-  const locationIntervalRef = useRef(null);
-  const [deviceCheckComplete, setDeviceCheckComplete] = useState(false);
-  const [showAllAlerts, setShowAllAlerts] = useState(false);
-  const [behaviorProgress, setBehaviorProgress] = useState(0);
-  const [behaviorSummary, setBehaviorSummary] = useState(null);
-  const [learningActive, setLearningActive] = useState(false);
   const [gpsAccuracy, setGpsAccuracy] = useState(null);
   const [locationUpdates, setLocationUpdates] = useState(0);
   const deviceTrackersRef = useRef(new Map());
-  const currentDeviceSessionRef = useRef(null); // CRITICAL: Track current device session
+  const currentDeviceSessionRef = useRef(null);
 
   useEffect(() => {
-  initializeDeviceTracking();
-  fetchDevices();
-  fetchAlerts();
-  startBehaviorMonitoring();
-
-  // Use polling instead of WebSocket for real-time updates
-  const devicesInterval = setInterval(() => {
+    initializeDeviceTracking();
     fetchDevices();
-  }, 2000); // Poll every 2 seconds for device updates
 
-  const alertsInterval = setInterval(() => {
-    fetchAlerts();
-  }, 5000); // Poll every 5 seconds for alerts
+    // Poll for device updates every 2 seconds
+    const devicesInterval = setInterval(() => {
+      fetchDevices();
+    }, 2000);
 
-  const behaviorInterval = setInterval(() => {
-    fetchBehaviorProgress();
-  }, 10000); // Poll every 10 seconds for behavior progress
-
-  return () => {
-    stopAllLocationTracking();
-    clearInterval(devicesInterval);
-    clearInterval(alertsInterval);
-    clearInterval(behaviorInterval);
-  };
-}, [user]);
-
-  const startBehaviorMonitoring = () => {
-    setLearningActive(true);
-    console.log('🎯 Behavior learning monitoring started');
-  };
-
-  const fetchBehaviorProgress = async () => {
-    try {
-      const response = await apiRequest(`/behavior/progress/${user.email}`);
-      const data = await response.json();
-      
-      setBehaviorProgress(data.learning_progress);
-      setBehaviorSummary(data.behavior_summary);
-      
-      if (data.learning_progress >= 100 && learningActive) {
-        setLearningActive(false);
-        console.log('✅ Behavior learning complete!');
-      }
-    } catch (err) {
-      console.error('Failed to fetch behavior progress:', err);
-    }
-  };
-
-  const simulateLearningComplete = async () => {
-    try {
-      const response = await apiRequest(`/behavior/simulate_complete/${user.email}`, {
-        method: 'POST'
-      });
-      
-      if (response.ok) {
-        setBehaviorProgress(100);
-        setLearningActive(false);
-        alert('🎉 Behavior learning simulated as complete for demo!');
-      }
-    } catch (err) {
-      console.error('Failed to simulate learning complete:', err);
-    }
-  };
+    return () => {
+      stopAllLocationTracking();
+      clearInterval(devicesInterval);
+    };
+  }, [user]);
 
   const initializeDeviceTracking = async () => {
     const deviceId = await getCurrentDeviceId();
     setCurrentDeviceId(deviceId);
     
-    // CRITICAL FIX: Store current device session
     currentDeviceSessionRef.current = {
       deviceId: deviceId,
-      isMobile: isMobileDevice(),
-      userAgent: navigator.userAgent
+      isMobile: isMobileDevice()
     };
     
     const deviceExists = await checkDeviceExists(deviceId);
-    setDeviceCheckComplete(true);
     
     if (!deviceExists) {
-      console.log('Device does not exist, waiting for setup...');
       setLocationStatus('waiting_for_setup');
     } else {
-      console.log('Device exists, starting independent location tracking...');
       startIndependentLocationTracking(deviceId);
     }
   };
@@ -116,7 +52,6 @@ const Dashboard = ({ user, onLogout }) => {
     
     const userAgent = navigator.userAgent;
     const isMobile = isMobileDevice();
-    // CRITICAL FIX: Generate unique device ID for this session
     const deviceId = `device_${user.email}_${isMobile ? 'mobile' : 'laptop'}_${btoa(userAgent).slice(0, 10)}_${Date.now()}`;
     
     return deviceId;
@@ -126,11 +61,8 @@ const Dashboard = ({ user, onLogout }) => {
     try {
       const response = await apiRequest(`/devices/${user.email}`);
       const userDevices = await response.json();
-      const exists = userDevices.some(device => device.device_id === deviceId);
-      console.log(`Device ${deviceId} exists: ${exists}`);
-      return exists;
+      return userDevices.some(device => device.device_id === deviceId);
     } catch (err) {
-      console.error('Failed to check device existence:', err);
       return false;
     }
   };
@@ -139,10 +71,7 @@ const Dashboard = ({ user, onLogout }) => {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   };
 
-  // CRITICAL FIX: Independent location tracking for each device
   const startIndependentLocationTracking = (deviceId) => {
-    console.log('🚀 Starting INDEPENDENT location tracking for device:', deviceId);
-    
     if (isMobileDevice()) {
       startMobileGPSTracking(deviceId);
     } else {
@@ -152,12 +81,10 @@ const Dashboard = ({ user, onLogout }) => {
 
   const startMobileGPSTracking = (deviceId) => {
     if (!navigator.geolocation) {
-      console.warn('Geolocation not supported, falling back to desktop mode');
       startLaptopLocationTracking(deviceId);
       return;
     }
 
-    console.log('📱 Starting INDEPENDENT mobile GPS tracking for:', deviceId);
     setLocationStatus('tracking_mobile_gps');
 
     const updateLocation = async (position, source) => {
@@ -166,54 +93,36 @@ const Dashboard = ({ user, onLogout }) => {
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        await updateLocation(position, 'mobile_initial_fix');
+        await updateLocation(position, 'mobile_initial');
       },
       (error) => {
-        console.error('Initial GPS fix failed:', error);
         startLaptopLocationTracking(deviceId);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 
     const watchId = navigator.geolocation.watchPosition(
       async (position) => {
-        await updateLocation(position, 'mobile_continuous_gps');
+        await updateLocation(position, 'mobile_continuous');
       },
       (error) => {
-        console.error('GPS watch error:', error);
         setTimeout(() => {
           if (locationStatus === 'tracking_mobile_gps') {
             startLaptopLocationTracking(deviceId);
           }
         }, 30000);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 1000,
-        distanceFilter: 1
-      }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 1000, distanceFilter: 1 }
     );
 
     locationWatcherRef.current = watchId;
-    deviceTrackersRef.current.set(deviceId, { 
-      type: 'gps', 
-      id: watchId,
-      deviceType: 'mobile'
-    });
+    deviceTrackersRef.current.set(deviceId, { type: 'gps', id: watchId });
   };
 
   const startLaptopLocationTracking = (deviceId) => {
-    console.log('💻 Starting INDEPENDENT laptop location tracking for:', deviceId);
     setLocationStatus('tracking_laptop');
 
     if (!navigator.geolocation) {
-      console.warn('Geolocation not supported on this laptop');
-      setLocationStatus('tracking_fallback');
       startFallbackLocationTracking(deviceId);
       return;
     }
@@ -225,20 +134,16 @@ const Dashboard = ({ user, onLogout }) => {
         accuracy: position.coords.accuracy,
         heading: position.coords.heading || 0,
         speed: position.coords.speed || 0,
-        city: 'Laptop Browser Location',
-        country: 'Browser Geolocation',
         location_type: 'browser_geolocation',
         timestamp: new Date().toISOString(),
         source: source,
         is_mobile: false,
-        gps_quality: getGPSQuality(position.coords.accuracy),
-        device_id: deviceId // CRITICAL: Include device ID in location data
+        device_id: deviceId
       };
 
       setGpsAccuracy(position.coords.accuracy);
       setLocationUpdates(prev => prev + 1);
       
-      // Only update user location if this is the current device
       if (deviceId === currentDeviceId) {
         setUserLocation({
           latitude: location.latitude,
@@ -249,76 +154,48 @@ const Dashboard = ({ user, onLogout }) => {
       await updateDeviceLocation(deviceId, location);
     };
 
-    // Get initial position
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        console.log('📍 Laptop initial location acquired:', position.coords);
         await updateLaptopLocation(position, 'laptop_initial');
       },
       async (error) => {
-        console.error('Laptop geolocation failed:', error);
-        setLocationStatus('tracking_fallback');
         await startFallbackLocationTracking(deviceId);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 
-    // Set up continuous updates for laptop (less frequent than mobile)
     const watchId = navigator.geolocation.watchPosition(
       async (position) => {
         await updateLaptopLocation(position, 'laptop_continuous');
       },
       (error) => {
-        console.error('Laptop location watch error:', error);
-        setLocationStatus('tracking_fallback');
         startFallbackLocationTracking(deviceId);
       },
-      {
-        enableHighAccuracy: false,
-        timeout: 15000,
-        maximumAge: 30000,
-        distanceFilter: 10
-      }
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000, distanceFilter: 10 }
     );
 
-    deviceTrackersRef.current.set(deviceId, { 
-      type: 'gps', 
-      id: watchId,
-      deviceType: 'laptop'
-    });
+    deviceTrackersRef.current.set(deviceId, { type: 'gps', id: watchId });
   };
 
   const startFallbackLocationTracking = async (deviceId) => {
-    console.log('🔄 Using fallback location tracking for device:', deviceId);
+    setLocationStatus('tracking_fallback');
     
     const updateLocation = async () => {
       try {
         const networkLocation = await getNetworkBasedLocation();
-        networkLocation.device_id = deviceId; // CRITICAL: Include device ID
+        networkLocation.device_id = deviceId;
         await updateDeviceLocation(deviceId, networkLocation);
       } catch (error) {
         console.error('Fallback location update failed:', error);
       }
     };
 
-    // Update immediately
     await updateLocation();
-
-    // Set up periodic updates
     const intervalId = setInterval(async () => {
       await updateLocation();
     }, 30000);
 
-    locationIntervalRef.current = intervalId;
-    deviceTrackersRef.current.set(deviceId, { 
-      type: 'interval', 
-      id: intervalId,
-      deviceType: 'fallback'
-    });
+    deviceTrackersRef.current.set(deviceId, { type: 'interval', id: intervalId });
   };
 
   const processGPSLocation = async (deviceId, position, source) => {
@@ -327,23 +204,18 @@ const Dashboard = ({ user, onLogout }) => {
       longitude: position.coords.longitude,
       accuracy: position.coords.accuracy,
       altitude: position.coords.altitude,
-      altitudeAccuracy: position.coords.altitudeAccuracy,
       heading: position.coords.heading,
       speed: position.coords.speed,
-      city: 'Live GPS Tracking',
-      country: 'Real-time Location',
       location_type: 'gps_live_mobile',
       timestamp: new Date().toISOString(),
       source: source,
       is_mobile: true,
-      gps_quality: getGPSQuality(position.coords.accuracy),
-      device_id: deviceId // CRITICAL: Include device ID
+      device_id: deviceId
     };
 
     setGpsAccuracy(position.coords.accuracy);
     setLocationUpdates(prev => prev + 1);
     
-    // Only update user location if this is the current device
     if (deviceId === currentDeviceId) {
       setUserLocation({
         latitude: location.latitude,
@@ -354,82 +226,44 @@ const Dashboard = ({ user, onLogout }) => {
     await updateDeviceLocation(deviceId, location);
   };
 
-  const getGPSQuality = (accuracy) => {
-    if (accuracy < 10) return 'excellent';
-    if (accuracy < 25) return 'good';
-    if (accuracy < 50) return 'moderate';
-    return 'poor';
-  };
-
   const getNetworkBasedLocation = async () => {
     try {
-      const services = [
-        'https://ipapi.co/json/',
-        'https://api.ipgeolocation.io/ipgeo?apiKey=demo',
-        'https://extreme-ip-lookup.com/json/'
-      ];
-
-      for (const service of services) {
-        try {
-          const response = await fetch(service, { timeout: 5000 });
-          if (response.ok) {
-            const data = await response.json();
-            
-            if (data.latitude && data.longitude) {
-              return {
-                latitude: data.latitude,
-                longitude: data.longitude,
-                accuracy: 1000,
-                city: data.city || 'Unknown',
-                country: data.country_name || data.country || 'Unknown',
-                location_type: 'network_ip',
-                timestamp: new Date().toISOString(),
-                source: 'network_geolocation',
-                is_mobile: false
-              };
-            }
-          }
-        } catch (error) {
-          console.log(`Service ${service} failed:`, error.message);
-          continue;
+      const response = await fetch('https://ipapi.co/json/', { timeout: 5000 });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.latitude && data.longitude) {
+          return {
+            latitude: data.latitude,
+            longitude: data.longitude,
+            accuracy: 1000,
+            city: data.city || 'Unknown',
+            country: data.country_name || 'Unknown',
+            location_type: 'network_ip',
+            timestamp: new Date().toISOString(),
+            source: 'network_geolocation',
+            is_mobile: false
+          };
         }
       }
-
-      return {
-        latitude: 6.9271 + (Math.random() - 0.5) * 0.001,
-        longitude: 79.8612 + (Math.random() - 0.5) * 0.001,
-        accuracy: 5000,
-        city: 'Colombo',
-        country: 'Sri Lanka',
-        location_type: 'network_fallback',
-        timestamp: new Date().toISOString(),
-        source: 'fallback',
-        is_mobile: false
-      };
     } catch (error) {
-      console.error('All network location services failed:', error);
-      return {
-        latitude: 6.9271,
-        longitude: 79.8612,
-        accuracy: 10000,
-        city: 'Colombo',
-        country: 'Sri Lanka',
-        location_type: 'default',
-        timestamp: new Date().toISOString(),
-        source: 'default_fallback',
-        is_mobile: false
-      };
+      console.log('Network location service failed');
     }
+
+    return {
+      latitude: 6.9271 + (Math.random() - 0.5) * 0.001,
+      longitude: 79.8612 + (Math.random() - 0.5) * 0.001,
+      accuracy: 5000,
+      city: 'Colombo',
+      country: 'Sri Lanka',
+      location_type: 'network_fallback',
+      timestamp: new Date().toISOString(),
+      source: 'fallback',
+      is_mobile: false
+    };
   };
 
   const updateDeviceLocation = async (deviceId, location) => {
     try {
-      console.log(`📍 Updating location for device ${deviceId}:`, {
-        lat: location.latitude,
-        lng: location.longitude,
-        source: location.source
-      });
-
       const response = await apiRequest('/update_device_location', {
         method: 'POST',
         body: JSON.stringify({
@@ -440,8 +274,6 @@ const Dashboard = ({ user, onLogout }) => {
       });
 
       if (response.ok) {
-        const result = await response.json();
-        
         setDevices(prevDevices => {
           const updatedDevices = prevDevices.map(device => 
             device.device_id === deviceId 
@@ -469,18 +301,6 @@ const Dashboard = ({ user, onLogout }) => {
           
           return updatedDevices;
         });
-
-        if (result.anomalies_detected > 0) {
-          console.log(`🚨 ${result.anomalies_detected} behavior anomalies detected for device ${deviceId}`);
-        }
-      } else {
-        const errorData = await response.json();
-        if (errorData.code === 'DEVICE_NOT_FOUND') {
-          console.log('Device not found, waiting for setup...');
-          setLocationStatus('waiting_for_setup');
-        } else {
-          console.error('Failed to update device location:', errorData);
-        }
       }
     } catch (err) {
       console.error('Failed to update device location:', err);
@@ -490,9 +310,6 @@ const Dashboard = ({ user, onLogout }) => {
   const stopAllLocationTracking = () => {
     if (locationWatcherRef.current) {
       navigator.geolocation.clearWatch(locationWatcherRef.current);
-    }
-    if (locationIntervalRef.current) {
-      clearInterval(locationIntervalRef.current);
     }
     
     deviceTrackersRef.current.forEach((tracker, deviceId) => {
@@ -504,7 +321,6 @@ const Dashboard = ({ user, onLogout }) => {
     });
     
     deviceTrackersRef.current.clear();
-    console.log('Stopped all location tracking');
   };
 
   const fetchDevices = async () => {
@@ -512,26 +328,11 @@ const Dashboard = ({ user, onLogout }) => {
       const response = await apiRequest(`/devices/${user.email}`);
       const data = await response.json();
       
-      const updatedDevices = data.map(device => {
-        const existingDevice = devices.find(d => d.device_id === device.device_id);
-        if (existingDevice && existingDevice.last_location && device.last_location) {
-          return {
-            ...device,
-            last_location: {
-              ...device.last_location,
-              is_mobile: existingDevice.last_location.is_mobile
-            }
-          };
-        }
-        return device;
-      });
+      setDevices(data);
       
-      setDevices(updatedDevices);
-      
-      // CRITICAL FIX: Start tracking for any new devices that aren't being tracked
-      updatedDevices.forEach(device => {
+      // Start tracking for any new devices
+      data.forEach(device => {
         if (!deviceTrackersRef.current.has(device.device_id) && device.device_id !== currentDeviceId) {
-          console.log(`🆕 Starting independent tracking for additional device: ${device.device_id}`);
           startAdditionalDeviceTracking(device.device_id, device.is_mobile);
         }
       });
@@ -551,8 +352,6 @@ const Dashboard = ({ user, onLogout }) => {
   const startAdditionalMobileTracking = (deviceId) => {
     if (!navigator.geolocation) return;
 
-    console.log(`📱 Starting INDEPENDENT mobile tracking for additional device: ${deviceId}`);
-
     const watchId = navigator.geolocation.watchPosition(
       async (position) => {
         const location = {
@@ -561,34 +360,21 @@ const Dashboard = ({ user, onLogout }) => {
           accuracy: position.coords.accuracy,
           heading: position.coords.heading || 0,
           speed: position.coords.speed || 0,
-          city: 'Mobile Device GPS',
-          country: 'Real-time Location',
           location_type: 'gps_mobile_device',
           timestamp: new Date().toISOString(),
           source: 'mobile_device_gps',
           is_mobile: true,
-          gps_quality: getGPSQuality(position.coords.accuracy),
-          device_id: deviceId // CRITICAL: Include device ID
+          device_id: deviceId
         };
         await updateDeviceLocation(deviceId, location);
       },
       (error) => {
         console.error(`GPS tracking failed for device ${deviceId}:`, error);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 2000,
-        distanceFilter: 2
-      }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000, distanceFilter: 2 }
     );
 
-    deviceTrackersRef.current.set(deviceId, { 
-      type: 'gps', 
-      id: watchId,
-      deviceType: 'mobile_additional'
-    });
-    console.log(`📍 Started INDEPENDENT GPS tracking for additional mobile device: ${deviceId}`);
+    deviceTrackersRef.current.set(deviceId, { type: 'gps', id: watchId });
   };
 
   const startAdditionalLaptopTracking = (deviceId) => {
@@ -597,8 +383,6 @@ const Dashboard = ({ user, onLogout }) => {
       return;
     }
 
-    console.log(`💻 Starting INDEPENDENT browser geolocation for additional laptop: ${deviceId}`);
-
     const watchId = navigator.geolocation.watchPosition(
       async (position) => {
         const location = {
@@ -607,45 +391,21 @@ const Dashboard = ({ user, onLogout }) => {
           accuracy: position.coords.accuracy,
           heading: position.coords.heading || 0,
           speed: position.coords.speed || 0,
-          city: 'Laptop Browser Location',
-          country: 'Browser Geolocation',
           location_type: 'browser_geolocation',
           timestamp: new Date().toISOString(),
           source: 'laptop_additional',
           is_mobile: false,
-          gps_quality: getGPSQuality(position.coords.accuracy),
-          device_id: deviceId // CRITICAL: Include device ID
+          device_id: deviceId
         };
         await updateDeviceLocation(deviceId, location);
       },
       (error) => {
-        console.error(`Laptop geolocation failed for device ${deviceId}:`, error);
         startFallbackLocationTracking(deviceId);
       },
-      {
-        enableHighAccuracy: false,
-        timeout: 15000,
-        maximumAge: 30000,
-        distanceFilter: 10
-      }
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000, distanceFilter: 10 }
     );
 
-    deviceTrackersRef.current.set(deviceId, { 
-      type: 'gps', 
-      id: watchId,
-      deviceType: 'laptop_additional'
-    });
-    console.log(`📍 Started INDEPENDENT browser geolocation tracking for additional laptop: ${deviceId}`);
-  };
-
-  const fetchAlerts = async () => {
-    try {
-      const response = await apiRequest(`/alerts/${user.email}`);
-      const data = await response.json();
-      setAlerts(data);
-    } catch (err) {
-      console.error('Failed to fetch alerts:', err);
-    }
+    deviceTrackersRef.current.set(deviceId, { type: 'gps', id: watchId });
   };
 
   const getStatus = (device) => {
@@ -660,337 +420,169 @@ const Dashboard = ({ user, onLogout }) => {
     return 'safe';
   };
 
-  const forceHighAccuracyUpdate = async () => {
-    if (!currentDeviceId) return;
-
-    setLocationStatus('manual_high_accuracy');
-    
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const location = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            heading: position.coords.heading || 0,
-            speed: position.coords.speed || 0,
-            city: 'Manual High Accuracy',
-            country: 'GPS',
-            location_type: 'gps_manual_high_accuracy',
-            timestamp: new Date().toISOString(),
-            source: 'manual_gps_high_accuracy',
-            is_mobile: isMobileDevice(),
-            gps_quality: getGPSQuality(position.coords.accuracy),
-            device_id: currentDeviceId // CRITICAL: Include device ID
-          };
-          await updateDeviceLocation(currentDeviceId, location);
-          setLocationStatus(isMobileDevice() ? 'tracking_mobile_gps' : 'tracking_laptop');
-        },
-        async (error) => {
-          console.error('Manual high accuracy location failed:', error);
-          const fallbackLocation = await getNetworkBasedLocation();
-          fallbackLocation.device_id = currentDeviceId;
-          await updateDeviceLocation(currentDeviceId, fallbackLocation);
-          setLocationStatus(isMobileDevice() ? 'tracking_mobile_gps' : 'tracking_laptop');
-        },
-        { 
-          enableHighAccuracy: true, 
-          timeout: 15000,
-          maximumAge: 0 
-        }
-      );
-    } else {
-      const fallbackLocation = await getNetworkBasedLocation();
-      fallbackLocation.device_id = currentDeviceId;
-      await updateDeviceLocation(currentDeviceId, fallbackLocation);
-      setLocationStatus(isMobileDevice() ? 'tracking_mobile_gps' : 'tracking_laptop');
-    }
-  };
-
   const getLocationStatusText = () => {
     switch(locationStatus) {
       case 'tracking_mobile_gps': 
-        return `📱 Live Mobile GPS (Accuracy: ±${gpsAccuracy ? Math.round(gpsAccuracy) : '?'}m)`;
+        return `📱 Mobile GPS (Accuracy: ±${gpsAccuracy ? Math.round(gpsAccuracy) : '?'}m)`;
       case 'tracking_laptop': 
-        return '💻 Laptop Browser Location';
+        return '💻 Laptop Location';
       case 'tracking_fallback': 
-        return '🌐 Network-based Location';
+        return '🌐 Network Location';
       case 'waiting_for_setup': 
-        return '⏳ Waiting for Device Setup...';
-      case 'manual_high_accuracy': 
-        return '🎯 Getting High Accuracy Location...';
+        return '⏳ Waiting for Setup...';
       case 'initializing': 
-        return '⚙️ Initializing Location...';
+        return '⚙️ Initializing...';
       default: 
         return '📍 Location Tracking';
     }
   };
 
-  const getDisplayAlerts = () => {
-    if (showAllAlerts) {
-      return alerts;
-    }
-    return alerts.slice(-3);
-  };
-
-  const toggleShowAllAlerts = () => {
-    setShowAllAlerts(!showAllAlerts);
-  };
-
-  const campusSections = [
-    { name: "Library Section", type: "library", color: "#3B82F6" },
-    { name: "Laboratory Section", type: "lab", color: "#10B981" },
-    { name: "Classroom Section", type: "classroom", color: "#F59E0B" },
-    { name: "Administration Section", type: "admin", color: "#EF4444" }
-  ];
-
-  const getLearningStatusText = () => {
-    if (behaviorProgress >= 100) {
-      return '✅ Behavior Learning Complete';
-    } else if (behaviorProgress > 0) {
-      return `🎯 Learning Behavior... ${Math.round(behaviorProgress)}%`;
-    } else {
-      return '⏳ Waiting to learn behavior patterns';
-    }
-  };
-
-  const getSimulatedDays = () => {
-    return Math.min(7, Math.floor(behaviorProgress / 100 * 7));
-  };
-
-  // CRITICAL FIX: Check if device is current device
   const isCurrentDevice = (device) => {
     return device.device_id === currentDeviceId;
   };
 
+  // Simple inline styles
+  const styles = {
+    container: {
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif'
+    },
+    navbar: {
+      background: '#2c3e50',
+      color: 'white',
+      padding: '15px 30px',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
+    },
+    content: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: '20px',
+      padding: '20px',
+      maxWidth: '1200px',
+      margin: '0 auto'
+    },
+    section: {
+      background: 'white',
+      borderRadius: '10px',
+      padding: '20px',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
+    },
+    deviceCard: {
+      background: '#f8f9fa',
+      border: '1px solid #e9ecef',
+      borderRadius: '8px',
+      padding: '15px',
+      marginBottom: '10px'
+    },
+    status: {
+      padding: '4px 8px',
+      borderRadius: '12px',
+      fontSize: '12px',
+      fontWeight: 'bold'
+    },
+    statusSafe: { background: '#d4edda', color: '#155724' },
+    statusWarning: { background: '#fff3cd', color: '#856404' },
+    statusOffline: { background: '#f8d7da', color: '#721c24' }
+  };
+
   return (
-    <div className="dashboard">
-      <nav className="navbar">
-        <div className="nav-title">
-          📍 Smart Device Tracker - INDEPENDENT DEVICE TRACKING
-          <span className="live-indicator">LIVE</span>
-          <span className="location-status-badge">{getLocationStatusText()}</span>
-          {locationUpdates > 0 && (
-            <span className="update-counter">Updates: {locationUpdates}</span>
-          )}
+    <div style={styles.container}>
+      <nav style={styles.navbar}>
+        <div>
+          <h2 style={{margin: 0}}>📍 Device Tracker</h2>
+          <div style={{fontSize: '14px', opacity: 0.8}}>
+            {getLocationStatusText()} • Updates: {locationUpdates}
+          </div>
         </div>
-        <div className="nav-user">
+        <div>
           Welcome, {user.email}
-          <button className="logout-btn" onClick={onLogout}>Logout</button>
+          <button 
+            onClick={onLogout}
+            style={{
+              background: 'rgba(255,255,255,0.1)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.3)',
+              padding: '8px 16px',
+              borderRadius: '6px',
+              marginLeft: '15px',
+              cursor: 'pointer'
+            }}
+          >
+            Logout
+          </button>
         </div>
       </nav>
 
-      {learningActive && (
-        <div className="behavior-learning-section">
-          <div className="learning-header">
-            <h3>🎯 AI Behavior Learning</h3>
-            <span className="learning-status">{getLearningStatusText()}</span>
-          </div>
-          
-          <div className="progress-container">
-            <div className="progress-bar">
-              <div 
-                className="progress-fill"
-                style={{ width: `${behaviorProgress}%` }}
-              ></div>
-            </div>
-            <div className="progress-info">
-              <span>Simulated Days: {getSimulatedDays()}/7</span>
-              <span>{Math.round(behaviorProgress)}% Complete</span>
-            </div>
-          </div>
-
-          {behaviorSummary && behaviorProgress > 0 && (
-            <div className="learning-stats">
-              <div className="stat-item">
-                <strong>Schedule Consistency:</strong> 
-                <span>{(behaviorSummary.schedule_consistency * 100).toFixed(0)}%</span>
-              </div>
-              <div className="stat-item">
-                <strong>Patterns Learned:</strong> 
-                <span>{behaviorSummary.learned_patterns}</span>
-              </div>
-              <div className="stat-item">
-                <strong>Devices Analyzed:</strong> 
-                <span>{behaviorSummary.devices_analyzed}</span>
-              </div>
-            </div>
-          )}
-
-          {behaviorProgress < 100 && (
-            <div className="learning-tip">
-              <small>
-                💡 <strong>Demo Tip:</strong> The system is learning your behavior patterns. 
-                Move between campus sections to help it learn. 
-                Or <button 
-                  className="simulate-btn" 
-                  onClick={simulateLearningComplete}
-                >
-                  Simulate Complete Learning
-                </button>
-              </small>
-            </div>
-          )}
-
-          {behaviorProgress >= 100 && (
-            <div className="learning-complete">
-              <div className="celebration">🎉</div>
-              <p><strong>Behavior Learning Complete!</strong> The system will now detect suspicious activities.</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="dashboard-content">
-        <div className="devices-section">
-          <div className="section-header">
-            <h3>My Devices ({devices.length})</h3>
-            <div className="location-controls">
-              <button className="btn btn-small btn-high-accuracy" onClick={forceHighAccuracyUpdate}>
-                🎯 High Accuracy Update
-              </button>
-            </div>
-          </div>
+      <div style={styles.content}>
+        <div style={styles.section}>
+          <h3 style={{marginTop: 0}}>My Devices ({devices.length})</h3>
           {devices.map((device, index) => (
-            <div key={device.device_id} className="device-card">
-              <div className="device-header">
-                <h4>{device.device_name || `Device ${index + 1}`}</h4>
-                <span className={`device-status status-${getStatus(device)}`}>
+            <div key={device.device_id} style={styles.deviceCard}>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                <h4 style={{margin: '0 0 10px 0'}}>
+                  {device.device_name || `Device ${index + 1}`} 
+                  {device.is_mobile ? ' 📱' : ' 💻'}
+                </h4>
+                <span style={{
+                  ...styles.status,
+                  ...(getStatus(device) === 'safe' ? styles.statusSafe : 
+                      getStatus(device) === 'warning' ? styles.statusWarning : styles.statusOffline)
+                }}>
                   {getStatus(device).toUpperCase()}
-                  {getStatus(device) === 'safe' ? ' 🟢' : 
-                   getStatus(device) === 'warning' ? ' 🟡' : ' 🔴'}
                 </span>
               </div>
               
-              <div className="device-info">
-                <p><strong>Type:</strong> {device.device_type} {device.is_mobile ? '📱' : '💻'}</p>
-                <p><strong>Location Source:</strong> {device.last_location?.source || 'Unknown'}</p>
-                <p><strong>GPS Quality:</strong> 
-                  {device.last_location?.gps_quality ? 
-                    <span className={`gps-quality ${device.last_location.gps_quality}`}>
-                      {device.last_location.gps_quality.toUpperCase()}
-                    </span> : 
-                    'N/A'
-                  }
-                </p>
-                <p><strong>Area:</strong> {device.last_location?.city || 'Unknown'}</p>
-                <p><strong>Coordinates:</strong> 
+              <div style={{fontSize: '14px', color: '#666'}}>
+                <div><strong>Type:</strong> {device.device_type}</div>
+                <div><strong>Location:</strong> {device.last_location?.city || 'Unknown'}</div>
+                <div><strong>Coordinates:</strong> 
                   {device.last_location ? 
                     `${device.last_location.latitude?.toFixed(6)}, ${device.last_location.longitude?.toFixed(6)}` : 
-                    'No location data'
+                    'No location'
                   }
-                </p>
-                <p><strong>Accuracy:</strong> {device.last_location?.accuracy ? `±${Math.round(device.last_location.accuracy)}m` : 'Unknown'}</p>
-                <p><strong>Last Update:</strong> {device.last_updated ? 
-                  new Date(device.last_updated).toLocaleTimeString('en-US', { timeZone: 'Asia/Colombo' }) : 'Never'}</p>
+                </div>
+                <div><strong>Accuracy:</strong> {device.last_location?.accuracy ? `±${Math.round(device.last_location.accuracy)}m` : 'Unknown'}</div>
+                <div><strong>Last Update:</strong> {device.last_updated ? 
+                  new Date(device.last_updated).toLocaleTimeString() : 'Never'
+                }</div>
                 
-                {device.last_location?.heading && (
-                  <p><strong>Heading:</strong> {device.last_location.heading.toFixed(1)}°</p>
-                )}
-                {device.last_location?.speed > 0 && (
-                  <p><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</p>
+                {isCurrentDevice(device) && (
+                  <div style={{marginTop: '8px', padding: '5px', background: '#e3f2fd', borderRadius: '4px', fontSize: '12px'}}>
+                    ✅ Current Device - Active Tracking
+                  </div>
                 )}
               </div>
-              
-              {isCurrentDevice(device) && (
-                <div className="current-device-badge">
-                  ✅ Current Device - {device.is_mobile ? 'Mobile GPS' : 'Laptop Browser'} Tracking Active
-                </div>
-              )}
-              
-              {!isCurrentDevice(device) && (
-                <div className="additional-device-badge">
-                  📍 Additional Device - Independent Tracking Active
-                </div>
-              )}
             </div>
           ))}
+          
           {devices.length === 0 && (
-            <div className="no-devices">
+            <div style={{textAlign: 'center', padding: '40px', color: '#666'}}>
               <p>No devices found. Complete device setup to start tracking.</p>
             </div>
           )}
         </div>
 
-        <div className="alerts-section">
-          <div className="section-header">
-            <h3>Alerts ({alerts.length})</h3>
-            {alerts.length > 3 && (
-              <button 
-                className="btn btn-small" 
-                onClick={toggleShowAllAlerts}
-                style={{ 
-                  background: 'transparent', 
-                  border: '1px solid #667eea',
-                  color: '#667eea'
-                }}
-              >
-                {showAllAlerts ? '▲ Show Less' : '▼ Show All'}
-              </button>
-            )}
+        <div style={styles.section}>
+          <h3 style={{marginTop: 0}}>Live Map</h3>
+          <div style={{
+            height: '400px',
+            background: '#e9ecef',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#666'
+          }}>
+            Map View - {devices.length} devices tracking
           </div>
           
-          <div className={`alerts-container ${showAllAlerts ? 'show-all' : 'show-limited'}`}>
-            {getDisplayAlerts().map((alert, index) => (
-              <div key={index} className={`alert-card ${alert.type === 'suspicious_behavior' ? 'behavior-alert' : ''}`}>
-                <div className="alert-header">
-                  <strong>{alert.type.replace('_', ' ').toUpperCase()}</strong>
-                  <span className="alert-time">
-                    {new Date(alert.created_at).toLocaleTimeString('en-US', { timeZone: 'Asia/Colombo' })}
-                  </span>
-                </div>
-                <p>{alert.message}</p>
-                {alert.severity === 'high' && (
-                  <div className="alert-severity high">🚨 HIGH SEVERITY</div>
-                )}
-              </div>
-            ))}
-          </div>
-          
-          {alerts.length === 0 && (
-            <div className="no-alerts">
-              <p>No alerts - Everything looks good! ✅</p>
-            </div>
-          )}
-          
-          {!showAllAlerts && alerts.length > 3 && (
-            <div className="alerts-footer">
-              <p className="alerts-more-indicator">
-                ... and {alerts.length - 3} more alerts. 
-                <span 
-                  className="view-all-link" 
-                  onClick={toggleShowAllAlerts}
-                  style={{ cursor: 'pointer', color: '#667eea', marginLeft: '5px' }}
-                >
-                  View all
-                </span>
-              </p>
-            </div>
-          )}
-        </div>
-
-        <div className="map-section">
-          <h3>Live Device Locations - INDEPENDENT TRACKING</h3>
-          <div className="map-container">
-            <MapView devices={devices} userLocation={userLocation} />
-          </div>
-          
-          <div className="campus-legend">
-            <h4>Campus Sections</h4>
-            {campusSections.map((section, index) => (
-              <div key={index} className="legend-zone-item">
-                <span 
-                  className="legend-zone-color" 
-                  style={{backgroundColor: section.color}}
-                ></span>
-                <span>{section.name} ({section.type})</span>
-              </div>
-            ))}
-          </div>
-          
-          <div className="tracking-info">
-            <p><strong>Independent Device Tracking:</strong> Each device maintains its own location data</p>
-            <p><strong>Active Trackers:</strong> {deviceTrackersRef.current.size} devices being tracked independently</p>
+          <div style={{marginTop: '15px', fontSize: '14px', color: '#666'}}>
+            <p><strong>Active Trackers:</strong> {deviceTrackersRef.current.size} devices</p>
+            <p><strong>Independent Tracking:</strong> Each device maintains separate location data</p>
           </div>
         </div>
       </div>
