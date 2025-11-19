@@ -12,18 +12,23 @@ L.Icon.Default.mergeOptions({
 });
 
 class CampusManager {
-  constructor(userLocation) {
-    this.userLocation = userLocation;
+  constructor(fixedLocation = null) {
+    this.fixedLocation = fixedLocation;
+    this.campusBounds = this.generateCampusBounds();
+    this.sections = this.generateCampusSections();
+  }
+
+  setFixedLocation(location) {
+    this.fixedLocation = location;
     this.campusBounds = this.generateCampusBounds();
     this.sections = this.generateCampusSections();
   }
 
   generateCampusBounds() {
-    if (!this.userLocation) {
-      this.userLocation = { latitude: 6.9271, longitude: 79.8612 };
-    }
+    // Use fixed location if available, otherwise use default
+    const baseLocation = this.fixedLocation || { latitude: 6.9271, longitude: 79.8612 };
     
-    const { latitude, longitude } = this.userLocation;
+    const { latitude, longitude } = baseLocation;
     const { CAMPUS_WIDTH, CAMPUS_HEIGHT } = config.CAMPUS_SETTINGS;
     
     const southWest = [
@@ -693,34 +698,66 @@ const MapView = ({ devices, userLocation }) => {
   const [campusSections, setCampusSections] = useState([]);
   const [campusBounds, setCampusBounds] = useState(null);
   const [mapReady, setMapReady] = useState(false);
+  const [campusGenerated, setCampusGenerated] = useState(false);
 
-  const getFallbackLocation = () => {
-    if (devices.length > 0 && devices[0].last_location) {
+  // Get the first device location to fix the campus
+  const getFirstDeviceLocation = () => {
+    const validDevices = devices.filter(device => 
+      device.last_location && 
+      device.last_location.latitude && 
+      device.last_location.longitude
+    );
+    
+    if (validDevices.length > 0) {
       return {
-        latitude: devices[0].last_location.latitude,
-        longitude: devices[0].last_location.longitude
+        latitude: validDevices[0].last_location.latitude,
+        longitude: validDevices[0].last_location.longitude
       };
     }
-    return {
-      latitude: 6.9271,
-      longitude: 79.8612
-    };
+    return null;
   };
 
   useEffect(() => {
-    const effectiveUserLocation = userLocation || getFallbackLocation();
-    
-    if (config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
-      try {
-        const manager = new CampusManager(effectiveUserLocation);
-        setCampusManager(manager);
-        setCampusSections(manager.sections);
-        setCampusBounds(manager.campusBounds);
-      } catch (error) {
-        console.error('Error creating campus sections:', error);
+    // Only generate campus once when first device is added
+    if (devices.length > 0 && !campusGenerated) {
+      const firstDeviceLocation = getFirstDeviceLocation();
+      
+      if (firstDeviceLocation && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
+        try {
+          console.log('🎓 Generating fixed campus at first device location:', firstDeviceLocation);
+          const manager = new CampusManager(firstDeviceLocation);
+          setCampusManager(manager);
+          setCampusSections(manager.sections);
+          setCampusBounds(manager.campusBounds);
+          setCampusGenerated(true);
+          
+          // Store campus location in localStorage for persistence
+          localStorage.setItem('campusLocation', JSON.stringify(firstDeviceLocation));
+        } catch (error) {
+          console.error('Error creating campus sections:', error);
+        }
+      }
+    } else if (campusGenerated) {
+      // Campus already generated, no need to do anything
+      console.log('🎓 Campus already generated, using fixed location');
+    } else {
+      // Check if we have a stored campus location
+      const storedCampusLocation = localStorage.getItem('campusLocation');
+      if (storedCampusLocation && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
+        try {
+          const location = JSON.parse(storedCampusLocation);
+          console.log('🎓 Using stored campus location:', location);
+          const manager = new CampusManager(location);
+          setCampusManager(manager);
+          setCampusSections(manager.sections);
+          setCampusBounds(manager.campusBounds);
+          setCampusGenerated(true);
+        } catch (error) {
+          console.error('Error using stored campus location:', error);
+        }
       }
     }
-  }, [userLocation, devices]);
+  }, [devices, campusGenerated]);
 
   const validDevices = devices.filter(device => 
     device.last_location && 
@@ -778,12 +815,23 @@ const MapView = ({ devices, userLocation }) => {
   };
 
   const getInitialCenter = () => {
+    // Use campus center if available, otherwise use device location
+    if (campusBounds) {
+      const [southWest, northEast] = campusBounds;
+      return [
+        (southWest[0] + northEast[0]) / 2,
+        (southWest[1] + northEast[1]) / 2
+      ];
+    }
+    
     if (userLocation) {
       return [userLocation.latitude, userLocation.longitude];
     }
+    
     if (validDevices.length > 0) {
       return [validDevices[0].last_location.latitude, validDevices[0].last_location.longitude];
     }
+    
     return [6.9271, 79.8612];
   };
 
