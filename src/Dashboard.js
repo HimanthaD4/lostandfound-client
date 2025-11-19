@@ -406,7 +406,15 @@ const Dashboard = ({ user, onLogout }) => {
     try {
       const response = await apiRequest(`/devices/${user.email}`);
       const data = await response.json();
-      setDevices(data);
+      // Filter out devices with invalid location data
+      const validDevices = data.filter(device => 
+        device.last_location && 
+        device.last_location.latitude && 
+        device.last_location.longitude &&
+        !isNaN(device.last_location.latitude) && 
+        !isNaN(device.last_location.longitude)
+      );
+      setDevices(validDevices);
     } catch (err) {
       console.error('Failed to fetch devices:', err);
     }

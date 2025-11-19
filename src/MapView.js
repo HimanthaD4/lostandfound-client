@@ -570,15 +570,26 @@ function CampusBoundaryRenderer({ campusBounds }) {
 }
 
 function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection }) {
+  // Filter out devices without valid location data
+  const validDevices = devices.filter(device => 
+    device.last_location && 
+    device.last_location.latitude && 
+    device.last_location.longitude &&
+    !isNaN(device.last_location.latitude) && 
+    !isNaN(device.last_location.longitude)
+  );
+
+  console.log(`🔄 Rendering ${validDevices.length} valid devices out of ${devices.length} total devices`);
+
   return (
     <>
-      {devices.map((device, index) => {
+      {validDevices.map((device, index) => {
         const currentSection = getCurrentSection(device);
         const gpsQuality = device.last_location?.gps_quality;
         
         return (
           <Marker
-            key={`${device.device_id}-${index}`}
+            key={`${device.device_id}-${index}-${device.last_updated || ''}`}
             position={[device.last_location.latitude, device.last_location.longitude]}
             icon={createAdvancedDirectionalIcon(
               getMarkerColor(device), 
@@ -705,7 +716,9 @@ const MapView = ({ devices, userLocation }) => {
     const validDevices = devices.filter(device => 
       device.last_location && 
       device.last_location.latitude && 
-      device.last_location.longitude
+      device.last_location.longitude &&
+      !isNaN(device.last_location.latitude) && 
+      !isNaN(device.last_location.longitude)
     );
     
     if (validDevices.length > 0) {
@@ -762,7 +775,9 @@ const MapView = ({ devices, userLocation }) => {
   const validDevices = devices.filter(device => 
     device.last_location && 
     device.last_location.latitude && 
-    device.last_location.longitude
+    device.last_location.longitude &&
+    !isNaN(device.last_location.latitude) && 
+    !isNaN(device.last_location.longitude)
   );
 
   const currentDeviceLocation = validDevices.length > 0 ? {
@@ -886,7 +901,7 @@ const MapView = ({ devices, userLocation }) => {
       
       {validDevices.length > 0 && (
         <StableDevicesRenderer
-          devices={validDevices}
+          devices={devices}
           campusManager={campusManager}
           getMarkerColor={getMarkerColor}
           getStatusText={getStatusText}
