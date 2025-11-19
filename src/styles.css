@@ -1467,3 +1467,53 @@ body {
 }
 
 
+/* Real-time tracking indicators */
+.realtime-indicator {
+  background: #ef4444;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: bold;
+  margin-left: 8px;
+  animation: pulse 1s infinite;
+}
+
+.update-counter {
+  background: #3b82f6;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: bold;
+  margin-left: 8px;
+}
+
+.btn-stop {
+  background: #ef4444 !important;
+  color: white !important;
+}
+
+.btn-stop:hover {
+  background: #dc2626 !important;
+}
+
+/* Enhanced device status for real-time */
+.status-safe {
+  background: #dcfce7;
+  color: #166534;
+  animation: pulse-slow 2s infinite;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+/* Real-time location updates */
+.location-status-tracking_realtime_gps {
+  background: #dcfce7;
+  color: #166534;
+  border: 2px solid #22c55e;
+  animation: pulse 2s infinite;
+}
