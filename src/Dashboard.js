@@ -776,5 +776,3 @@ const Dashboard = ({ user, onLogout }) => {
     </div>
   );
 };
-
-export default Dashboard;
