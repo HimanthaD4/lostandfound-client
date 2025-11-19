@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Rectangle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import config from '../config';
+import config from './config';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -324,19 +324,6 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           left: 50%;
           transform: translate(-50%, -50%);
         "></div>
-        ${isCurrentDevice ? `
-          <div style="
-            position: absolute;
-            top: -2px;
-            right: -2px;
-            width: 8px;
-            height: 8px;
-            background: #22c55e;
-            border: 2px solid white;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-          "></div>
-        ` : ''}
       </div>
     `,
     iconSize: [24, 24],
@@ -406,7 +393,59 @@ function MapController({ onUserInteraction }) {
   return null;
 }
 
-function StableMapUpdater({ devices, userInteracting, campusBounds, currentDeviceId }) {
+function InitialAutoCenter({ devices, campusBounds, onMapReady }) {
+  const map = useMap();
+  const hasCentered = useRef(false);
+
+  useEffect(() => {
+    if (!hasCentered.current && (devices.length > 0 || campusBounds)) {
+      let center, zoom;
+      
+      if (devices.length > 0) {
+        const validDevices = devices.filter(device => 
+          device.last_location && 
+          device.last_location.latitude && 
+          device.last_location.longitude
+        );
+
+        if (validDevices.length > 0) {
+          center = calculateMapCenter(validDevices);
+          zoom = calculateZoom(validDevices);
+        }
+      }
+      
+      if (!center && campusBounds) {
+        const [southWest, northEast] = campusBounds;
+        center = [
+          (southWest[0] + northEast[0]) / 2,
+          (southWest[1] + northEast[1]) / 2
+        ];
+        zoom = 19;
+      }
+
+      if (!center) {
+        center = [6.9271, 79.8612];
+        zoom = 19;
+      }
+
+      if (center) {
+        map.setView(center, zoom, {
+          animate: true,
+          duration: 1
+        });
+        hasCentered.current = true;
+        
+        if (onMapReady) {
+          onMapReady();
+        }
+      }
+    }
+  }, [devices, campusBounds, map, onMapReady]);
+
+  return null;
+}
+
+function StableMapUpdater({ devices, userInteracting, campusBounds }) {
   const map = useMap();
   const lastDeviceCount = useRef(0);
   const lastDevicePositions = useRef([]);
@@ -426,26 +465,19 @@ function StableMapUpdater({ devices, userInteracting, campusBounds, currentDevic
     if (shouldUpdate && validDevices.length > 0) {
       updateInProgress.current = true;
       
-      const currentDevice = validDevices.find(device => device.device_id === currentDeviceId);
+      const center = calculateMapCenter(validDevices);
+      const zoom = calculateZoom(validDevices);
       
-      if (currentDevice && currentDevice.last_location) {
-        const center = [
-          currentDevice.last_location.latitude,
-          currentDevice.last_location.longitude
-        ];
-        
-        const currentZoom = map.getZoom();
-        const currentCenter = map.getCenter();
-        
-        const centerChanged = currentCenter.distanceTo(center) > 10;
-        
-        if (centerChanged) {
-          map.setView(center, currentZoom, {
-            animate: true,
-            duration: 1,
-            easeLinearity: 0.25
-          });
-        }
+      const currentZoom = map.getZoom();
+      const currentCenter = map.getCenter();
+      
+      const zoomChanged = Math.abs(currentZoom - zoom) > 0.5;
+      const centerChanged = currentCenter.distanceTo(center) > 50;
+      
+      if (zoomChanged || centerChanged) {
+        map.flyTo(center, zoom, {
+          duration: 1.5
+        });
       }
       
       lastDeviceCount.current = validDevices.length;
@@ -457,9 +489,9 @@ function StableMapUpdater({ devices, userInteracting, campusBounds, currentDevic
       
       setTimeout(() => {
         updateInProgress.current = false;
-      }, 500);
+      }, 1000);
     }
-  }, [devices, userInteracting, map, campusBounds, currentDeviceId]);
+  }, [devices, userInteracting, map, campusBounds]);
 
   return null;
 }
@@ -532,7 +564,7 @@ function CampusBoundaryRenderer({ campusBounds }) {
   );
 }
 
-function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection, currentDeviceId }) {
+function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection }) {
   return (
     <>
       {devices.map((device, index) => {
@@ -548,7 +580,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
               device.last_location.heading || 0,
               device.last_location.speed || 0,
               device.is_mobile,
-              device.device_id === currentDeviceId,
+              isCurrentDevice(device),
               gpsQuality
             )}
           >
@@ -596,7 +628,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                   {device.last_location.speed > 0 && (
                     <div><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</div>
                   )}
-                  {device.device_id === currentDeviceId && (
+                  {isCurrentDevice(device) && (
                     <div><strong>📍 Current Device - Live Tracking</strong></div>
                   )}
                 </div>
@@ -632,7 +664,30 @@ const shouldUpdateMap = (currentDevices, lastPositions, lastCount) => {
   return false;
 };
 
-const MapView = ({ devices, userLocation, currentDeviceId }) => {
+const calculateMapCenter = (validDevices) => {
+  if (validDevices.length === 0) return null;
+  if (validDevices.length === 1) {
+    const device = validDevices[0];
+    return [device.last_location.latitude, device.last_location.longitude];
+  }
+  
+  const lats = validDevices.map(d => d.last_location.latitude);
+  const lons = validDevices.map(d => d.last_location.longitude);
+  
+  const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  const centerLon = (Math.min(...lons) + Math.max(...lons)) / 2;
+  
+  return [centerLat, centerLon];
+};
+
+const calculateZoom = (validDevices) => {
+  if (validDevices.length <= 1) return 20;
+  if (validDevices.length === 2) return 19;
+  if (validDevices.length <= 5) return 18;
+  return 17;
+};
+
+const MapView = ({ devices, userLocation }) => {
   const [userInteracting, setUserInteracting] = useState(false);
   const [campusManager, setCampusManager] = useState(null);
   const [campusSections, setCampusSections] = useState([]);
@@ -640,13 +695,6 @@ const MapView = ({ devices, userLocation, currentDeviceId }) => {
   const [mapReady, setMapReady] = useState(false);
 
   const getFallbackLocation = () => {
-    const currentDevice = devices.find(device => device.device_id === currentDeviceId);
-    if (currentDevice && currentDevice.last_location) {
-      return {
-        latitude: currentDevice.last_location.latitude,
-        longitude: currentDevice.last_location.longitude
-      };
-    }
     if (devices.length > 0 && devices[0].last_location) {
       return {
         latitude: devices[0].last_location.latitude,
@@ -672,7 +720,7 @@ const MapView = ({ devices, userLocation, currentDeviceId }) => {
         console.error('Error creating campus sections:', error);
       }
     }
-  }, [userLocation, devices, currentDeviceId]);
+  }, [userLocation, devices]);
 
   const validDevices = devices.filter(device => 
     device.last_location && 
@@ -717,6 +765,10 @@ const MapView = ({ devices, userLocation, currentDeviceId }) => {
     return 'Live';
   };
 
+  const isCurrentDevice = (device) => {
+    return device.is_mobile && device.last_location?.speed !== undefined;
+  };
+
   const getCurrentSection = (device) => {
     if (!campusManager || !device.last_location) return null;
     return campusManager.getCurrentSection(
@@ -726,10 +778,6 @@ const MapView = ({ devices, userLocation, currentDeviceId }) => {
   };
 
   const getInitialCenter = () => {
-    const currentDevice = validDevices.find(device => device.device_id === currentDeviceId);
-    if (currentDevice && currentDevice.last_location) {
-      return [currentDevice.last_location.latitude, currentDevice.last_location.longitude];
-    }
     if (userLocation) {
       return [userLocation.latitude, userLocation.longitude];
     }
@@ -754,14 +802,18 @@ const MapView = ({ devices, userLocation, currentDeviceId }) => {
       wheelPxPerZoomLevel={60}
       preferCanvas={true}
     >
+      <InitialAutoCenter 
+        devices={validDevices} 
+        campusBounds={campusBounds} 
+        onMapReady={handleMapReady}
+      />
       <MapController onUserInteraction={handleUserInteraction} />
       
       {mapReady && (
         <StableMapUpdater 
           devices={devices} 
           userInteracting={userInteracting} 
-          campusBounds={campusBounds}
-          currentDeviceId={currentDeviceId}
+          campusBounds={campusBounds} 
         />
       )}
       
@@ -790,9 +842,8 @@ const MapView = ({ devices, userLocation, currentDeviceId }) => {
           campusManager={campusManager}
           getMarkerColor={getMarkerColor}
           getStatusText={getStatusText}
-          isCurrentDevice={() => false}
+          isCurrentDevice={isCurrentDevice}
           getCurrentSection={getCurrentSection}
-          currentDeviceId={currentDeviceId}
         />
       )}
 
