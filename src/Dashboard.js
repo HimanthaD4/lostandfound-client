@@ -22,22 +22,31 @@ const Dashboard = ({ user, onLogout }) => {
   const currentDeviceSessionRef = useRef(null); // CRITICAL: Track current device session
 
   useEffect(() => {
-    initializeDeviceTracking();
+  initializeDeviceTracking();
+  fetchDevices();
+  fetchAlerts();
+  startBehaviorMonitoring();
+
+  // Use polling instead of WebSocket for real-time updates
+  const devicesInterval = setInterval(() => {
     fetchDevices();
+  }, 2000); // Poll every 2 seconds for device updates
+
+  const alertsInterval = setInterval(() => {
     fetchAlerts();
-    startBehaviorMonitoring();
+  }, 5000); // Poll every 5 seconds for alerts
 
-    const interval = setInterval(() => {
-      fetchDevices();
-      fetchAlerts();
-      fetchBehaviorProgress();
-    }, 3000);
+  const behaviorInterval = setInterval(() => {
+    fetchBehaviorProgress();
+  }, 10000); // Poll every 10 seconds for behavior progress
 
-    return () => {
-      stopAllLocationTracking();
-      clearInterval(interval);
-    };
-  }, [user]);
+  return () => {
+    stopAllLocationTracking();
+    clearInterval(devicesInterval);
+    clearInterval(alertsInterval);
+    clearInterval(behaviorInterval);
+  };
+}, [user]);
 
   const startBehaviorMonitoring = () => {
     setLearningActive(true);
