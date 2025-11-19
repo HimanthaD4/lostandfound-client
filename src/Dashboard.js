@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { apiRequest } from './App';
-import MapView from './MapView';
+import MapView from './MapView'; 
 
 const Dashboard = ({ user, onLogout }) => {
   const [devices, setDevices] = useState([]);
