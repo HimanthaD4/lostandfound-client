@@ -96,8 +96,6 @@ class CampusManager {
       }
     ];
 
-    this.verifyNoOverlaps(sections);
-    
     return sections;
   }
 
@@ -112,73 +110,6 @@ class CampusManager {
       [lat + height/2, lng - width/2],
       [lat - height/2, lng - width/2]
     ];
-  }
-
-  verifyNoOverlaps(sections) {
-    let hasOverlaps = false;
-    
-    for (let i = 0; i < sections.length; i++) {
-      for (let j = i + 1; j < sections.length; j++) {
-        const sectionA = sections[i];
-        const sectionB = sections[j];
-        
-        if (this.doPolygonsOverlap(sectionA.coordinates, sectionB.coordinates)) {
-          hasOverlaps = true;
-        }
-      }
-    }
-    
-    return !hasOverlaps;
-  }
-
-  doPolygonsOverlap(polyA, polyB) {
-    const boundsA = this.getPolygonBounds(polyA);
-    const boundsB = this.getPolygonBounds(polyB);
-    
-    if (boundsA.north < boundsB.south || boundsA.south > boundsB.north ||
-        boundsA.east < boundsB.west || boundsA.west > boundsB.east) {
-      return false;
-    }
-    
-    for (const vertex of polyA) {
-      if (this.isPointInPolygon(vertex[0], vertex[1], polyB)) {
-        return true;
-      }
-    }
-    
-    for (const vertex of polyB) {
-      if (this.isPointInPolygon(vertex[0], vertex[1], polyA)) {
-        return true;
-      }
-    }
-    
-    return false;
-  }
-
-  getPolygonBounds(polygon) {
-    let north = -90, south = 90, east = -180, west = 180;
-    
-    for (const vertex of polygon) {
-      const lat = vertex[0];
-      const lng = vertex[1];
-      
-      north = Math.max(north, lat);
-      south = Math.min(south, lat);
-      east = Math.max(east, lng);
-      west = Math.min(west, lng);
-    }
-    
-    return { north, south, east, west };
-  }
-
-  getZoneDescription(type) {
-    const descriptions = {
-      library: "Library and study area with books and computers",
-      lab: "Science and computer laboratories with research equipment",
-      classroom: "Lecture halls and classrooms for teaching",
-      admin: "Administrative offices and student services"
-    };
-    return descriptions[type] || "Campus section";
   }
 
   isInCampus(lat, lng) {
@@ -511,9 +442,9 @@ function CampusSectionsRenderer({ sections, currentDeviceLocation }) {
           pathOptions={{
             color: section.color,
             fillColor: section.color,
-            fillOpacity: 0.5,
+            fillOpacity: 0.3,
             weight: 2,
-            opacity: 0.9
+            opacity: 0.8
           }}
         >
           <Popup>
@@ -573,13 +504,19 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
   // Filter out devices without valid location data
   const validDevices = devices.filter(device => 
     device.last_location && 
-    device.last_location.latitude && 
-    device.last_location.longitude &&
+    typeof device.last_location.latitude === 'number' && 
+    typeof device.last_location.longitude === 'number' &&
     !isNaN(device.last_location.latitude) && 
-    !isNaN(device.last_location.longitude)
+    !isNaN(device.last_location.longitude) &&
+    device.last_location.latitude !== 0 && 
+    device.last_location.longitude !== 0
   );
 
   console.log(`🔄 Rendering ${validDevices.length} valid devices out of ${devices.length} total devices`);
+
+  if (validDevices.length === 0) {
+    return null;
+  }
 
   return (
     <>
@@ -589,7 +526,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
         
         return (
           <Marker
-            key={`${device.device_id}-${index}-${device.last_updated || ''}`}
+            key={`${device.device_id}-${index}-${device.last_updated || Date.now()}`}
             position={[device.last_location.latitude, device.last_location.longitude]}
             icon={createAdvancedDirectionalIcon(
               getMarkerColor(device), 
@@ -715,13 +652,16 @@ const MapView = ({ devices, userLocation }) => {
   const getFirstDeviceLocation = () => {
     const validDevices = devices.filter(device => 
       device.last_location && 
-      device.last_location.latitude && 
-      device.last_location.longitude &&
+      typeof device.last_location.latitude === 'number' && 
+      typeof device.last_location.longitude === 'number' &&
       !isNaN(device.last_location.latitude) && 
-      !isNaN(device.last_location.longitude)
+      !isNaN(device.last_location.longitude) &&
+      device.last_location.latitude !== 0 && 
+      device.last_location.longitude !== 0
     );
     
     if (validDevices.length > 0) {
+      console.log('🎓 Found valid device for campus location:', validDevices[0]);
       return {
         latitude: validDevices[0].last_location.latitude,
         longitude: validDevices[0].last_location.longitude
@@ -746,9 +686,12 @@ const MapView = ({ devices, userLocation }) => {
           
           // Store campus location in localStorage for persistence
           localStorage.setItem('campusLocation', JSON.stringify(firstDeviceLocation));
+          console.log('✅ Campus generated with 4 sections');
         } catch (error) {
           console.error('Error creating campus sections:', error);
         }
+      } else {
+        console.log('⚠️ No valid device location found for campus generation');
       }
     } else if (campusGenerated) {
       // Campus already generated, no need to do anything
@@ -774,10 +717,12 @@ const MapView = ({ devices, userLocation }) => {
 
   const validDevices = devices.filter(device => 
     device.last_location && 
-    device.last_location.latitude && 
-    device.last_location.longitude &&
+    typeof device.last_location.latitude === 'number' && 
+    typeof device.last_location.longitude === 'number' &&
     !isNaN(device.last_location.latitude) && 
-    !isNaN(device.last_location.longitude)
+    !isNaN(device.last_location.longitude) &&
+    device.last_location.latitude !== 0 && 
+    device.last_location.longitude !== 0
   );
 
   const currentDeviceLocation = validDevices.length > 0 ? {
@@ -839,7 +784,7 @@ const MapView = ({ devices, userLocation }) => {
       ];
     }
     
-    if (userLocation) {
+    if (userLocation && userLocation.latitude && userLocation.longitude) {
       return [userLocation.latitude, userLocation.longitude];
     }
     
@@ -849,6 +794,14 @@ const MapView = ({ devices, userLocation }) => {
     
     return [6.9271, 79.8612];
   };
+
+  console.log('📍 MapView State:', {
+    devicesCount: devices.length,
+    validDevicesCount: validDevices.length,
+    campusGenerated,
+    campusSectionsCount: campusSections.length,
+    campusBounds: !!campusBounds
+  });
 
   return (
     <MapContainer

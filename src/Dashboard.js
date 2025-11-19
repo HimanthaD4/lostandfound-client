@@ -237,8 +237,15 @@ const Dashboard = ({ user, onLogout }) => {
             location_type: 'browser_geolocation',
             timestamp: new Date().toISOString(),
             source: 'browser_geolocation',
-            is_mobile: false
+            is_mobile: false,
+            gps_quality: getGPSQuality(position.coords.accuracy)
           };
+          
+          setUserLocation({
+            latitude: location.latitude,
+            longitude: location.longitude
+          });
+          
           await updateDeviceLocation(deviceId, location);
         },
         async (error) => {
@@ -246,9 +253,9 @@ const Dashboard = ({ user, onLogout }) => {
           await updateNetworkLocation(deviceId);
         },
         {
-          enableHighAccuracy: false,
+          enableHighAccuracy: true,
           timeout: 8000,
-          maximumAge: 300000
+          maximumAge: 0
         }
       );
     } else {
@@ -287,15 +294,16 @@ const Dashboard = ({ user, onLogout }) => {
             
             if (data.latitude && data.longitude) {
               return {
-                latitude: data.latitude,
-                longitude: data.longitude,
+                latitude: parseFloat(data.latitude),
+                longitude: parseFloat(data.longitude),
                 accuracy: 1000, // Network location accuracy is lower
                 city: data.city || 'Unknown',
                 country: data.country_name || data.country || 'Unknown',
                 location_type: 'network_ip',
                 timestamp: new Date().toISOString(),
                 source: 'network_geolocation',
-                is_mobile: false
+                is_mobile: false,
+                gps_quality: 'moderate'
               };
             }
           }
@@ -305,18 +313,63 @@ const Dashboard = ({ user, onLogout }) => {
         }
       }
 
-      // Fallback to default location with some variation
-      return {
-        latitude: 6.9271 + (Math.random() - 0.5) * 0.001,
-        longitude: 79.8612 + (Math.random() - 0.5) * 0.001,
-        accuracy: 5000,
-        city: 'Colombo',
-        country: 'Sri Lanka',
-        location_type: 'network_fallback',
-        timestamp: new Date().toISOString(),
-        source: 'fallback',
-        is_mobile: false
-      };
+      // Fallback to browser geolocation with lower accuracy
+      return new Promise((resolve) => {
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              resolve({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+                heading: position.coords.heading || 0,
+                speed: position.coords.speed || 0,
+                city: 'Browser Geolocation Fallback',
+                country: 'GPS',
+                location_type: 'browser_geolocation_fallback',
+                timestamp: new Date().toISOString(),
+                source: 'browser_geolocation_fallback',
+                is_mobile: false,
+                gps_quality: getGPSQuality(position.coords.accuracy)
+              });
+            },
+            () => {
+              // Final fallback
+              resolve({
+                latitude: 6.9271 + (Math.random() - 0.5) * 0.001,
+                longitude: 79.8612 + (Math.random() - 0.5) * 0.001,
+                accuracy: 5000,
+                city: 'Colombo',
+                country: 'Sri Lanka',
+                location_type: 'network_fallback',
+                timestamp: new Date().toISOString(),
+                source: 'fallback',
+                is_mobile: false,
+                gps_quality: 'poor'
+              });
+            },
+            {
+              enableHighAccuracy: false,
+              timeout: 5000,
+              maximumAge: 300000
+            }
+          );
+        } else {
+          // Final fallback
+          resolve({
+            latitude: 6.9271,
+            longitude: 79.8612,
+            accuracy: 10000,
+            city: 'Colombo',
+            country: 'Sri Lanka',
+            location_type: 'default',
+            timestamp: new Date().toISOString(),
+            source: 'default_fallback',
+            is_mobile: false,
+            gps_quality: 'poor'
+          });
+        }
+      });
     } catch (error) {
       console.error('All network location services failed:', error);
       return {
@@ -328,13 +381,16 @@ const Dashboard = ({ user, onLogout }) => {
         location_type: 'default',
         timestamp: new Date().toISOString(),
         source: 'default_fallback',
-        is_mobile: false
+        is_mobile: false,
+        gps_quality: 'poor'
       };
     }
   };
 
   const updateDeviceLocation = async (deviceId, location) => {
     try {
+      console.log(`📍 Updating device ${deviceId} location:`, location);
+      
       const response = await apiRequest('/update_device_location', {
         method: 'POST',
         body: JSON.stringify({
@@ -409,11 +465,14 @@ const Dashboard = ({ user, onLogout }) => {
       // Filter out devices with invalid location data
       const validDevices = data.filter(device => 
         device.last_location && 
-        device.last_location.latitude && 
-        device.last_location.longitude &&
+        typeof device.last_location.latitude === 'number' && 
+        typeof device.last_location.longitude === 'number' &&
         !isNaN(device.last_location.latitude) && 
-        !isNaN(device.last_location.longitude)
+        !isNaN(device.last_location.longitude) &&
+        device.last_location.latitude !== 0 && 
+        device.last_location.longitude !== 0
       );
+      console.log(`📱 Fetched ${validDevices.length} valid devices`);
       setDevices(validDevices);
     } catch (err) {
       console.error('Failed to fetch devices:', err);
@@ -464,6 +523,12 @@ const Dashboard = ({ user, onLogout }) => {
             is_mobile: isMobileDevice(),
             gps_quality: getGPSQuality(position.coords.accuracy)
           };
+          
+          setUserLocation({
+            latitude: location.latitude,
+            longitude: location.longitude
+          });
+          
           await updateDeviceLocation(currentDeviceId, location);
           setLocationStatus(isMobileDevice() ? 'tracking_mobile_gps' : 'tracking_desktop_enhanced');
         },
