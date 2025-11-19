@@ -51,6 +51,9 @@ function MapUpdater({ devices }) {
       );
       
       map.fitBounds(group.getBounds(), { padding: [20, 20] });
+    } else {
+      // Default to campus location if no devices
+      map.setView([6.9271, 79.8612], 17);
     }
   }, [devices, map]);
 

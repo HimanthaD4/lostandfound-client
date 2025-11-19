@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { apiRequest } from './App';
+import MapView from './MapView';
 
 const Dashboard = ({ user, onLogout }) => {
   const [devices, setDevices] = useState([]);
@@ -566,7 +567,7 @@ const Dashboard = ({ user, onLogout }) => {
           )}
         </div>
 
-        // In Dashboard.js, replace the map section with:
+ 
 <div style={styles.section}>
   <h3 style={{marginTop: 0}}>Live Map</h3>
   <MapView devices={devices} userLocation={userLocation} />
