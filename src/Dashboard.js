@@ -915,32 +915,7 @@ const Dashboard = ({ user, onLogout }) => {
             ))}
           </div>
           
-          <div className="map-legend">
-            <div className="legend-item">
-              <span className="legend-color green"></span>
-              <span>Live (Updated &lt; 15 sec ago)</span>
-            </div>
-            <div className="legend-item">
-              <span className="legend-color orange"></span>
-              <span>Warning (Updated 15-30 sec ago)</span>
-            </div>
-            <div className="legend-item">
-              <span className="legend-color red"></span>
-              <span>Offline (Updated &gt; 30 sec ago)</span>
-            </div>
-            <div className="legend-item">
-              <span className="legend-direction">➤</span>
-              <span>Direction indicator (mobile devices)</span>
-            </div>
-            <div className="legend-item">
-              <span className="gps-quality excellent"></span>
-              <span>Excellent GPS (&lt;10m accuracy)</span>
-            </div>
-            <div className="legend-item">
-              <span className="gps-quality good"></span>
-              <span>Good GPS (10-25m accuracy)</span>
-            </div>
-          </div>
+          
         </div>
       </div>
     </div>
