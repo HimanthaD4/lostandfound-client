@@ -648,55 +648,35 @@ const MapView = ({ devices, userLocation }) => {
   const [mapReady, setMapReady] = useState(false);
   const [campusGenerated, setCampusGenerated] = useState(false);
 
-  // Get the first device location to fix the campus
-  const getFirstDeviceLocation = () => {
-    const validDevices = devices.filter(device => 
-      device.last_location && 
-      typeof device.last_location.latitude === 'number' && 
-      typeof device.last_location.longitude === 'number' &&
-      !isNaN(device.last_location.latitude) && 
-      !isNaN(device.last_location.longitude) &&
-      device.last_location.latitude !== 0 && 
-      device.last_location.longitude !== 0
-    );
-    
-    if (validDevices.length > 0) {
-      console.log('🎓 Found valid device for campus location:', validDevices[0]);
-      return {
-        latitude: validDevices[0].last_location.latitude,
-        longitude: validDevices[0].last_location.longitude
-      };
-    }
-    return null;
+  // Get a fixed location for campus (not based on device location)
+  const getFixedCampusLocation = () => {
+    // Use a fixed location for campus that doesn't depend on device locations
+    // This ensures campus stays fixed while devices can move freely
+    return {
+      latitude: 6.9271,
+      longitude: 79.8612
+    };
   };
 
   useEffect(() => {
-    // Only generate campus once when first device is added
-    if (devices.length > 0 && !campusGenerated) {
-      const firstDeviceLocation = getFirstDeviceLocation();
-      
-      if (firstDeviceLocation && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
-        try {
-          console.log('🎓 Generating fixed campus at first device location:', firstDeviceLocation);
-          const manager = new CampusManager(firstDeviceLocation);
-          setCampusManager(manager);
-          setCampusSections(manager.sections);
-          setCampusBounds(manager.campusBounds);
-          setCampusGenerated(true);
-          
-          // Store campus location in localStorage for persistence
-          localStorage.setItem('campusLocation', JSON.stringify(firstDeviceLocation));
-          console.log('✅ Campus generated with 4 sections');
-        } catch (error) {
-          console.error('Error creating campus sections:', error);
-        }
-      } else {
-        console.log('⚠️ No valid device location found for campus generation');
+    // Generate campus only once with fixed location, not based on device location
+    if (!campusGenerated && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
+      try {
+        console.log('🎓 Generating fixed campus at predefined location');
+        const fixedLocation = getFixedCampusLocation();
+        const manager = new CampusManager(fixedLocation);
+        setCampusManager(manager);
+        setCampusSections(manager.sections);
+        setCampusBounds(manager.campusBounds);
+        setCampusGenerated(true);
+        
+        // Store campus location in localStorage for persistence
+        localStorage.setItem('campusLocation', JSON.stringify(fixedLocation));
+        console.log('✅ Campus generated with 4 sections at fixed location');
+      } catch (error) {
+        console.error('Error creating campus sections:', error);
       }
-    } else if (campusGenerated) {
-      // Campus already generated, no need to do anything
-      console.log('🎓 Campus already generated, using fixed location');
-    } else {
+    } else if (!campusGenerated) {
       // Check if we have a stored campus location
       const storedCampusLocation = localStorage.getItem('campusLocation');
       if (storedCampusLocation && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
@@ -713,7 +693,7 @@ const MapView = ({ devices, userLocation }) => {
         }
       }
     }
-  }, [devices, campusGenerated]);
+  }, [campusGenerated]);
 
   const validDevices = devices.filter(device => 
     device.last_location && 
