@@ -566,25 +566,32 @@ const Dashboard = ({ user, onLogout }) => {
           )}
         </div>
 
-        <div style={styles.section}>
-          <h3 style={{marginTop: 0}}>Live Map</h3>
-          <div style={{
-            height: '400px',
-            background: '#e9ecef',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#666'
-          }}>
-            Map View - {devices.length} devices tracking
-          </div>
-          
-          <div style={{marginTop: '15px', fontSize: '14px', color: '#666'}}>
-            <p><strong>Active Trackers:</strong> {deviceTrackersRef.current.size} devices</p>
-            <p><strong>Independent Tracking:</strong> Each device maintains separate location data</p>
-          </div>
-        </div>
+        // In Dashboard.js, replace the map section with:
+<div style={styles.section}>
+  <h3 style={{marginTop: 0}}>Live Map</h3>
+  <MapView devices={devices} userLocation={userLocation} />
+  
+  <div style={{marginTop: '15px', fontSize: '14px', color: '#666'}}>
+    <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+        <div style={{ width: '12px', height: '12px', background: '#e74c3c', borderRadius: '50%' }}></div>
+        <span>Mobile Devices</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+        <div style={{ width: '12px', height: '12px', background: '#3498db', borderRadius: '50%' }}></div>
+        <span>Laptop Devices</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+        <div style={{ width: '12px', height: '12px', background: '#95a5a6', borderRadius: '50%' }}></div>
+        <span>Offline Devices</span>
+      </div>
+    </div>
+    <p style={{ marginTop: '10px' }}>
+      <strong>Active Trackers:</strong> {deviceTrackersRef.current.size} devices • 
+      <strong> Updates:</strong> {locationUpdates}
+    </p>
+  </div>
+</div>
       </div>
     </div>
   );
