@@ -223,7 +223,7 @@ class CampusManager {
   }
 }
 
-const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality) => {
+const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality, deviceType) => {
   if (isMobile) {
     const pulseAnimation = isCurrentDevice ? `
       @keyframes pulse {
@@ -246,6 +246,8 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
         box-shadow: 0 1px 3px rgba(0,0,0,0.3);
       "></div>
     ` : '';
+
+    const deviceEmoji = deviceType === 'mobile' ? '📱' : '💻';
 
     return L.divIcon({
       className: 'custom-direction-icon',
@@ -297,12 +299,30 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           "></div>
           
           ${qualityIndicator}
+          
+          <div style="
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 16px;
+            background: rgba(255,255,255,0.9);
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+          ">${deviceEmoji}</div>
         </div>
       `,
       iconSize: [32, 32],
       iconAnchor: [16, 16],
     });
   }
+
+  const deviceEmoji = deviceType === 'mobile' ? '📱' : '💻';
 
   return L.divIcon({
     className: 'computer-device-icon',
@@ -324,6 +344,21 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           left: 50%;
           transform: translate(-50%, -50%);
         "></div>
+        <div style="
+          position: absolute;
+          top: -18px;
+          left: 50%;
+          transform: translateX(-50%);
+          font-size: 14px;
+          background: rgba(255,255,255,0.9);
+          border-radius: 50%;
+          width: 18px;
+          height: 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        ">${deviceEmoji}</div>
       </div>
     `,
     iconSize: [24, 24],
@@ -445,17 +480,17 @@ function InitialAutoCenter({ devices, campusBounds, onMapReady }) {
   return null;
 }
 
-// FIXED: StationaryMapUpdater - Only updates individual device markers, never moves the map
 function StationaryMapUpdater({ devices, userInteracting }) {
   const map = useMap();
   const lastDevicePositions = useRef(new Map());
   const updateInProgress = useRef(false);
 
   useEffect(() => {
-    // Don't do anything if user is interacting or update is in progress
     if (userInteracting || updateInProgress.current) {
       return;
     }
+
+    updateInProgress.current = true;
 
     const validDevices = devices.filter(device => 
       device.last_location && 
@@ -463,7 +498,7 @@ function StationaryMapUpdater({ devices, userInteracting }) {
       device.last_location.longitude
     );
 
-    // Only update individual device markers, never move the map
+    // Update individual device markers only
     validDevices.forEach(device => {
       const deviceId = device.device_id;
       const currentPosition = {
@@ -473,18 +508,14 @@ function StationaryMapUpdater({ devices, userInteracting }) {
       
       const lastPosition = lastDevicePositions.current.get(deviceId);
       
-      // Update marker position only if device actually moved significantly
       if (!lastPosition || 
-          Math.abs(currentPosition.lat - lastPosition.lat) > 0.00001 || 
-          Math.abs(currentPosition.lng - lastPosition.lng) > 0.00001) {
+          Math.abs(currentPosition.lat - lastPosition.lat) > 0.000001 || 
+          Math.abs(currentPosition.lng - lastPosition.lng) > 0.000001) {
         
-        // The marker will update automatically through React re-render
-        // We just track the position changes here
         lastDevicePositions.current.set(deviceId, currentPosition);
       }
     });
 
-    // Remove positions for devices that are no longer in the list
     const currentDeviceIds = new Set(validDevices.map(d => d.device_id));
     lastDevicePositions.current.forEach((position, deviceId) => {
       if (!currentDeviceIds.has(deviceId)) {
@@ -492,6 +523,7 @@ function StationaryMapUpdater({ devices, userInteracting }) {
       }
     });
 
+    updateInProgress.current = false;
   }, [devices, userInteracting, map]);
 
   return null;
@@ -569,8 +601,11 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
   return (
     <>
       {devices.map((device, index) => {
+        if (!device.last_location) return null;
+        
         const currentSection = getCurrentSection(device);
         const gpsQuality = device.last_location?.gps_quality;
+        const deviceType = device.device_type || (device.is_mobile ? 'mobile' : 'laptop');
         
         return (
           <Marker
@@ -582,7 +617,8 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
               device.last_location.speed || 0,
               device.is_mobile,
               isCurrentDevice(device),
-              gpsQuality
+              gpsQuality,
+              deviceType
             )}
           >
             <Popup>
@@ -591,6 +627,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                 <div className="popup-details">
                   <div><strong>Type:</strong> {device.is_mobile ? '📱 Mobile' : '💻 Laptop'}</div>
                   <div><strong>Status:</strong> {getStatusText(device)}</div>
+                  <div><strong>Device ID:</strong> {device.device_id.slice(0, 8)}...</div>
                   {gpsQuality && (
                     <div>
                       <strong>GPS Quality:</strong> 
@@ -628,6 +665,9 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                   )}
                   {device.last_location.speed > 0 && (
                     <div><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</div>
+                  )}
+                  {device.last_location.source && (
+                    <div><strong>Source:</strong> {device.last_location.source}</div>
                   )}
                   {isCurrentDevice(device) && (
                     <div><strong>📍 Current Device - Live Tracking</strong></div>
@@ -696,7 +736,7 @@ const MapView = ({ devices, userLocation }) => {
         setCampusSections(manager.sections);
         setCampusBounds(manager.campusBounds);
         setCampusGenerated(true);
-        console.log('🎓 Campus generated based on first device location');
+        console.log('🎓 Campus generated based on device locations');
       } catch (error) {
         console.error('Error creating campus sections:', error);
       }
@@ -747,7 +787,8 @@ const MapView = ({ devices, userLocation }) => {
   };
 
   const isCurrentDevice = (device) => {
-    return device.is_mobile && device.last_location?.speed !== undefined;
+    // Simple check - you might want to implement more sophisticated logic
+    return device.is_mobile && device.last_location?.source?.includes('mobile');
   };
 
   const getCurrentSection = (device) => {
@@ -767,6 +808,8 @@ const MapView = ({ devices, userLocation }) => {
     }
     return [6.9271, 79.8612];
   };
+
+  console.log(`🗺️ Rendering ${validDevices.length} devices on map with independent locations`);
 
   return (
     <MapContainer
