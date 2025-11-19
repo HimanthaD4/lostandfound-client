@@ -223,7 +223,7 @@ class CampusManager {
   }
 }
 
-const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality, isRealTime) => {
+const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality) => {
   if (isMobile) {
     const pulseAnimation = isCurrentDevice ? `
       @keyframes pulse {
@@ -231,26 +231,6 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
         50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.7; }
         100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
       }
-    ` : '';
-
-    const realTimeIndicator = isRealTime ? `
-      <div style="
-        position: absolute;
-        bottom: -8px;
-        right: -8px;
-        width: 16px;
-        height: 16px;
-        background: #10B981;
-        border: 2px solid white;
-        border-radius: 50%;
-        animation: pulse 1s infinite;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 8px;
-        color: white;
-        font-weight: bold;
-      ">🔄</div>
     ` : '';
 
     const qualityIndicator = gpsQuality ? `
@@ -317,7 +297,6 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           "></div>
           
           ${qualityIndicator}
-          ${realTimeIndicator}
         </div>
       `,
       iconSize: [32, 32],
@@ -345,19 +324,6 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           left: 50%;
           transform: translate(-50%, -50%);
         "></div>
-        ${isRealTime ? `
-          <div style="
-            position: absolute;
-            bottom: -6px;
-            right: -6px;
-            width: 12px;
-            height: 12px;
-            background: #10B981;
-            border: 2px solid white;
-            border-radius: 50%;
-            animation: pulse 1s infinite;
-          "></div>
-        ` : ''}
       </div>
     `,
     iconSize: [24, 24],
@@ -479,7 +445,7 @@ function InitialAutoCenter({ devices, campusBounds, onMapReady }) {
   return null;
 }
 
-function RealTimeMapUpdater({ devices, userInteracting, campusBounds }) {
+function StableMapUpdater({ devices, userInteracting, campusBounds }) {
   const map = useMap();
   const lastDeviceCount = useRef(0);
   const lastDevicePositions = useRef([]);
@@ -506,11 +472,11 @@ function RealTimeMapUpdater({ devices, userInteracting, campusBounds }) {
       const currentCenter = map.getCenter();
       
       const zoomChanged = Math.abs(currentZoom - zoom) > 0.5;
-      const centerChanged = currentCenter.distanceTo(center) > 10; // Reduced from 50 to 10 for more sensitive updates
+      const centerChanged = currentCenter.distanceTo(center) > 50;
       
       if (zoomChanged || centerChanged) {
         map.flyTo(center, zoom, {
-          duration: 0.5 // Faster animation for real-time
+          duration: 1.5
         });
       }
       
@@ -523,7 +489,7 @@ function RealTimeMapUpdater({ devices, userInteracting, campusBounds }) {
       
       setTimeout(() => {
         updateInProgress.current = false;
-      }, 500);
+      }, 1000);
     }
   }, [devices, userInteracting, map, campusBounds]);
 
@@ -598,17 +564,16 @@ function CampusBoundaryRenderer({ campusBounds }) {
   );
 }
 
-function RealTimeDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection }) {
+function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection }) {
   return (
     <>
       {devices.map((device, index) => {
         const currentSection = getCurrentSection(device);
         const gpsQuality = device.last_location?.gps_quality;
-        const isRealTime = device.real_time || false;
         
         return (
           <Marker
-            key={`${device.device_id}-${index}-${device.last_updated}`} // Added last_updated for proper re-rendering
+            key={`${device.device_id}-${index}`}
             position={[device.last_location.latitude, device.last_location.longitude]}
             icon={createAdvancedDirectionalIcon(
               getMarkerColor(device), 
@@ -616,8 +581,7 @@ function RealTimeDevicesRenderer({ devices, campusManager, getMarkerColor, getSt
               device.last_location.speed || 0,
               device.is_mobile,
               isCurrentDevice(device),
-              gpsQuality,
-              isRealTime
+              gpsQuality
             )}
           >
             <Popup>
@@ -625,7 +589,7 @@ function RealTimeDevicesRenderer({ devices, campusManager, getMarkerColor, getSt
                 <strong>{device.device_name || `Device ${index + 1}`}</strong>
                 <div className="popup-details">
                   <div><strong>Type:</strong> {device.is_mobile ? '📱 Mobile' : '💻 Computer'}</div>
-                  <div><strong>Status:</strong> {getStatusText(device)} {isRealTime && '🔄'}</div>
+                  <div><strong>Status:</strong> {getStatusText(device)}</div>
                   {gpsQuality && (
                     <div>
                       <strong>GPS Quality:</strong> 
@@ -633,9 +597,6 @@ function RealTimeDevicesRenderer({ devices, campusManager, getMarkerColor, getSt
                         {gpsQuality.toUpperCase()}
                       </span>
                     </div>
-                  )}
-                  {isRealTime && (
-                    <div><strong>🔄 Real-time Tracking Active</strong></div>
                   )}
                   {currentSection && (
                     <div>
@@ -668,7 +629,7 @@ function RealTimeDevicesRenderer({ devices, campusManager, getMarkerColor, getSt
                     <div><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</div>
                   )}
                   {isCurrentDevice(device) && (
-                    <div><strong>📍 Current Device - Real-time Tracking</strong></div>
+                    <div><strong>📍 Current Device - Live Tracking</strong></div>
                   )}
                 </div>
               </div>
@@ -684,7 +645,7 @@ const shouldUpdateMap = (currentDevices, lastPositions, lastCount) => {
   if (Math.abs(currentDevices.length - lastCount) > 0) return true;
   if (lastPositions.length === 0) return true;
 
-  const significantMoveThreshold = 0.000001; // More sensitive threshold for real-time
+  const significantMoveThreshold = 0.00001;
   
   for (const currentDevice of currentDevices) {
     const lastPosition = lastPositions.find(pos => pos.device_id === currentDevice.device_id);
@@ -732,6 +693,7 @@ const MapView = ({ devices, userLocation }) => {
   const [campusSections, setCampusSections] = useState([]);
   const [campusBounds, setCampusBounds] = useState(null);
   const [mapReady, setMapReady] = useState(false);
+  const [campusGenerated, setCampusGenerated] = useState(false);
 
   const getFallbackLocation = () => {
     if (devices.length > 0 && devices[0].last_location) {
@@ -747,19 +709,21 @@ const MapView = ({ devices, userLocation }) => {
   };
 
   useEffect(() => {
-    const effectiveUserLocation = userLocation || getFallbackLocation();
-    
-    if (config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
+    if (!campusGenerated && devices.length > 0 && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
+      const effectiveUserLocation = userLocation || getFallbackLocation();
+      
       try {
         const manager = new CampusManager(effectiveUserLocation);
         setCampusManager(manager);
         setCampusSections(manager.sections);
         setCampusBounds(manager.campusBounds);
+        setCampusGenerated(true);
+        console.log('🎓 Campus generated based on first device location');
       } catch (error) {
         console.error('Error creating campus sections:', error);
       }
     }
-  }, [userLocation, devices]);
+  }, [devices, userLocation, campusGenerated]);
 
   const validDevices = devices.filter(device => 
     device.last_location && 
@@ -787,8 +751,8 @@ const MapView = ({ devices, userLocation }) => {
     const now = new Date();
     const diffSeconds = (now - lastUpdate) / 1000;
     
-    if (diffSeconds > 10) return '#dc2626'; // More sensitive for real-time
-    if (diffSeconds > 5) return '#d97706'; // More sensitive for real-time
+    if (diffSeconds > 30) return '#dc2626';
+    if (diffSeconds > 15) return '#d97706';
     return '#059669';
   };
 
@@ -799,8 +763,8 @@ const MapView = ({ devices, userLocation }) => {
     const now = new Date();
     const diffSeconds = (now - lastUpdate) / 1000;
     
-    if (diffSeconds > 10) return 'Offline'; // More sensitive for real-time
-    if (diffSeconds > 5) return 'Stale'; // More sensitive for real-time
+    if (diffSeconds > 30) return 'Offline';
+    if (diffSeconds > 15) return 'Stale';
     return 'Live';
   };
 
@@ -849,7 +813,7 @@ const MapView = ({ devices, userLocation }) => {
       <MapController onUserInteraction={handleUserInteraction} />
       
       {mapReady && (
-        <RealTimeMapUpdater 
+        <StableMapUpdater 
           devices={devices} 
           userInteracting={userInteracting} 
           campusBounds={campusBounds} 
@@ -864,11 +828,11 @@ const MapView = ({ devices, userLocation }) => {
         updateWhenZooming={false}
       />
 
-      {campusBounds && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS && (
+      {campusBounds && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS && campusGenerated && (
         <CampusBoundaryRenderer campusBounds={campusBounds} />
       )}
       
-      {campusSections.length > 0 && (
+      {campusSections.length > 0 && campusGenerated && (
         <CampusSectionsRenderer 
           sections={campusSections} 
           currentDeviceLocation={currentDeviceLocation}
@@ -876,7 +840,7 @@ const MapView = ({ devices, userLocation }) => {
       )}
       
       {validDevices.length > 0 && (
-        <RealTimeDevicesRenderer
+        <StableDevicesRenderer
           devices={validDevices}
           campusManager={campusManager}
           getMarkerColor={getMarkerColor}
@@ -893,7 +857,7 @@ const MapView = ({ devices, userLocation }) => {
               <strong>No Active Devices</strong>
               <div className="popup-details">
                 <p>Waiting for device location updates...</p>
-                {campusSections.length > 0 && (
+                {campusGenerated && (
                   <p><strong>Campus Ready:</strong> {campusSections.length} properly separated rectangular sections</p>
                 )}
               </div>
