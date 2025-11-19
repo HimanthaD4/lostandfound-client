@@ -1,7 +1,40 @@
 import React, { useState, useEffect, useRef } from 'react';
-import MapView from './MapView';
 import { apiRequest } from './App';
 import config from './config';
+
+// Fallback MapView component in case the import fails
+const FallbackMapView = ({ devices, userLocation, currentDeviceId }) => {
+  return (
+    <div style={{ 
+      height: '100%', 
+      width: '100%', 
+      background: '#f0f0f0',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: '8px',
+      border: '2px dashed #ccc'
+    }}>
+      <div style={{ textAlign: 'center', color: '#666' }}>
+        <h3>🗺️ Map Loading...</h3>
+        <p>Live device locations will appear here</p>
+        <p><small>Devices with location: {devices.filter(d => d.last_location).length}</small></p>
+      </div>
+    </div>
+  );
+};
+
+// Try to import MapView, but use fallback if it fails
+let MapViewComponent;
+
+try {
+  // Dynamic import to handle module loading issues
+  const MapViewModule = require('./MapView');
+  MapViewComponent = MapViewModule.default || MapViewModule;
+} catch (error) {
+  console.warn('MapView import failed, using fallback:', error);
+  MapViewComponent = FallbackMapView;
+}
 
 const Dashboard = ({ user, onLogout }) => {
   const [devices, setDevices] = useState([]);
@@ -658,7 +691,11 @@ const Dashboard = ({ user, onLogout }) => {
         <div className="map-section">
           <h3>Live Device Locations</h3>
           <div className="map-container">
-            <MapView devices={devices} userLocation={userLocation} currentDeviceId={currentDeviceId} />
+            <MapViewComponent 
+              devices={devices} 
+              userLocation={userLocation} 
+              currentDeviceId={currentDeviceId} 
+            />
           </div>
           
           <div className="campus-legend">
