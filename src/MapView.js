@@ -360,7 +360,7 @@ function MapController({ onUserInteraction }) {
       interactionTimer.current = setTimeout(() => {
         userInteracting.current = false;
         onUserInteraction(false);
-      }, 2000);
+      }, 3000); // Increased timeout to 3 seconds for better user experience
     };
 
     map.on('movestart', handleInteractionStart);
@@ -445,14 +445,19 @@ function InitialAutoCenter({ devices, campusBounds, onMapReady }) {
   return null;
 }
 
-function StableMapUpdater({ devices, userInteracting, campusBounds }) {
+// NEW: SmartMapUpdater that only updates when necessary and respects user interactions
+function SmartMapUpdater({ devices, userInteracting, campusBounds }) {
   const map = useMap();
   const lastDeviceCount = useRef(0);
   const lastDevicePositions = useRef([]);
   const updateInProgress = useRef(false);
+  const lastUpdateTime = useRef(0);
 
   useEffect(() => {
-    if (userInteracting || updateInProgress.current) return;
+    // Don't update if user is interacting or update is in progress
+    if (userInteracting || updateInProgress.current) {
+      return;
+    }
 
     const validDevices = devices.filter(device => 
       device.last_location && 
@@ -460,9 +465,12 @@ function StableMapUpdater({ devices, userInteracting, campusBounds }) {
       device.last_location.longitude
     );
 
+    // Only update if there are significant changes and enough time has passed
     const shouldUpdate = shouldUpdateMap(validDevices, lastDevicePositions.current, lastDeviceCount.current);
+    const timeSinceLastUpdate = Date.now() - lastUpdateTime.current;
+    const minUpdateInterval = 5000; // Only update every 5 seconds at minimum
 
-    if (shouldUpdate && validDevices.length > 0) {
+    if (shouldUpdate && validDevices.length > 0 && timeSinceLastUpdate > minUpdateInterval) {
       updateInProgress.current = true;
       
       const center = calculateMapCenter(validDevices);
@@ -471,12 +479,15 @@ function StableMapUpdater({ devices, userInteracting, campusBounds }) {
       const currentZoom = map.getZoom();
       const currentCenter = map.getCenter();
       
-      const zoomChanged = Math.abs(currentZoom - zoom) > 0.5;
-      const centerChanged = currentCenter.distanceTo(center) > 50;
+      // Only update if there's a significant change in view
+      const zoomChanged = Math.abs(currentZoom - zoom) > 1; // Increased threshold
+      const centerChanged = currentCenter.distanceTo(center) > 100; // Increased threshold
       
-      if (zoomChanged || centerChanged) {
+      // Only update map if devices move significantly or new devices are added
+      if (zoomChanged || centerChanged || validDevices.length !== lastDeviceCount.current) {
         map.flyTo(center, zoom, {
-          duration: 1.5
+          duration: 2, // Slower, smoother animation
+          easeLinearity: 0.25
         });
       }
       
@@ -486,10 +497,11 @@ function StableMapUpdater({ devices, userInteracting, campusBounds }) {
         lng: d.last_location.longitude,
         device_id: d.device_id
       }));
+      lastUpdateTime.current = Date.now();
       
       setTimeout(() => {
         updateInProgress.current = false;
-      }, 1000);
+      }, 2000);
     }
   }, [devices, userInteracting, map, campusBounds]);
 
@@ -645,7 +657,7 @@ const shouldUpdateMap = (currentDevices, lastPositions, lastCount) => {
   if (Math.abs(currentDevices.length - lastCount) > 0) return true;
   if (lastPositions.length === 0) return true;
 
-  const significantMoveThreshold = 0.00001;
+  const significantMoveThreshold = 0.00005; // Increased threshold for movement detection
   
   for (const currentDevice of currentDevices) {
     const lastPosition = lastPositions.find(pos => pos.device_id === currentDevice.device_id);
@@ -681,10 +693,10 @@ const calculateMapCenter = (validDevices) => {
 };
 
 const calculateZoom = (validDevices) => {
-  if (validDevices.length <= 1) return 20;
-  if (validDevices.length === 2) return 19;
-  if (validDevices.length <= 5) return 18;
-  return 17;
+  if (validDevices.length <= 1) return 19; // Slightly zoomed out for single device
+  if (validDevices.length === 2) return 18;
+  if (validDevices.length <= 5) return 17;
+  return 16; // More zoomed out for multiple devices
 };
 
 const MapView = ({ devices, userLocation }) => {
@@ -794,7 +806,7 @@ const MapView = ({ devices, userLocation }) => {
     <MapContainer
       center={getInitialCenter()}
       zoom={19}
-      minZoom={16}
+      minZoom={15} // Reduced min zoom for better usability
       maxZoom={22}
       style={{ height: '100%', width: '100%' }}
       scrollWheelZoom={true}
@@ -802,7 +814,7 @@ const MapView = ({ devices, userLocation }) => {
       doubleClickZoom={true}
       zoomSnap={0.5}
       zoomDelta={0.5}
-      wheelPxPerZoomLevel={60}
+      wheelPxPerZoomLevel={120} // Slower zoom for better control
       preferCanvas={true}
     >
       <InitialAutoCenter 
@@ -813,7 +825,7 @@ const MapView = ({ devices, userLocation }) => {
       <MapController onUserInteraction={handleUserInteraction} />
       
       {mapReady && (
-        <StableMapUpdater 
+        <SmartMapUpdater 
           devices={devices} 
           userInteracting={userInteracting} 
           campusBounds={campusBounds} 
