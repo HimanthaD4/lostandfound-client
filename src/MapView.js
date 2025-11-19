@@ -223,7 +223,7 @@ class CampusManager {
   }
 }
 
-const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality) => {
+const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality, isRealTime) => {
   if (isMobile) {
     const pulseAnimation = isCurrentDevice ? `
       @keyframes pulse {
@@ -231,6 +231,26 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
         50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.7; }
         100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
       }
+    ` : '';
+
+    const realTimeIndicator = isRealTime ? `
+      <div style="
+        position: absolute;
+        bottom: -8px;
+        right: -8px;
+        width: 16px;
+        height: 16px;
+        background: #10B981;
+        border: 2px solid white;
+        border-radius: 50%;
+        animation: pulse 1s infinite;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 8px;
+        color: white;
+        font-weight: bold;
+      ">🔄</div>
     ` : '';
 
     const qualityIndicator = gpsQuality ? `
@@ -297,6 +317,7 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           "></div>
           
           ${qualityIndicator}
+          ${realTimeIndicator}
         </div>
       `,
       iconSize: [32, 32],
@@ -324,6 +345,19 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           left: 50%;
           transform: translate(-50%, -50%);
         "></div>
+        ${isRealTime ? `
+          <div style="
+            position: absolute;
+            bottom: -6px;
+            right: -6px;
+            width: 12px;
+            height: 12px;
+            background: #10B981;
+            border: 2px solid white;
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+          "></div>
+        ` : ''}
       </div>
     `,
     iconSize: [24, 24],
@@ -445,7 +479,7 @@ function InitialAutoCenter({ devices, campusBounds, onMapReady }) {
   return null;
 }
 
-function StableMapUpdater({ devices, userInteracting, campusBounds }) {
+function RealTimeMapUpdater({ devices, userInteracting, campusBounds }) {
   const map = useMap();
   const lastDeviceCount = useRef(0);
   const lastDevicePositions = useRef([]);
@@ -472,11 +506,11 @@ function StableMapUpdater({ devices, userInteracting, campusBounds }) {
       const currentCenter = map.getCenter();
       
       const zoomChanged = Math.abs(currentZoom - zoom) > 0.5;
-      const centerChanged = currentCenter.distanceTo(center) > 50;
+      const centerChanged = currentCenter.distanceTo(center) > 10; // Reduced from 50 to 10 for more sensitive updates
       
       if (zoomChanged || centerChanged) {
         map.flyTo(center, zoom, {
-          duration: 1.5
+          duration: 0.5 // Faster animation for real-time
         });
       }
       
@@ -489,7 +523,7 @@ function StableMapUpdater({ devices, userInteracting, campusBounds }) {
       
       setTimeout(() => {
         updateInProgress.current = false;
-      }, 1000);
+      }, 500);
     }
   }, [devices, userInteracting, map, campusBounds]);
 
@@ -564,16 +598,17 @@ function CampusBoundaryRenderer({ campusBounds }) {
   );
 }
 
-function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection }) {
+function RealTimeDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection }) {
   return (
     <>
       {devices.map((device, index) => {
         const currentSection = getCurrentSection(device);
         const gpsQuality = device.last_location?.gps_quality;
+        const isRealTime = device.real_time || false;
         
         return (
           <Marker
-            key={`${device.device_id}-${index}`}
+            key={`${device.device_id}-${index}-${device.last_updated}`} // Added last_updated for proper re-rendering
             position={[device.last_location.latitude, device.last_location.longitude]}
             icon={createAdvancedDirectionalIcon(
               getMarkerColor(device), 
@@ -581,7 +616,8 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
               device.last_location.speed || 0,
               device.is_mobile,
               isCurrentDevice(device),
-              gpsQuality
+              gpsQuality,
+              isRealTime
             )}
           >
             <Popup>
@@ -589,7 +625,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                 <strong>{device.device_name || `Device ${index + 1}`}</strong>
                 <div className="popup-details">
                   <div><strong>Type:</strong> {device.is_mobile ? '📱 Mobile' : '💻 Computer'}</div>
-                  <div><strong>Status:</strong> {getStatusText(device)}</div>
+                  <div><strong>Status:</strong> {getStatusText(device)} {isRealTime && '🔄'}</div>
                   {gpsQuality && (
                     <div>
                       <strong>GPS Quality:</strong> 
@@ -597,6 +633,9 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                         {gpsQuality.toUpperCase()}
                       </span>
                     </div>
+                  )}
+                  {isRealTime && (
+                    <div><strong>🔄 Real-time Tracking Active</strong></div>
                   )}
                   {currentSection && (
                     <div>
@@ -629,7 +668,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                     <div><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</div>
                   )}
                   {isCurrentDevice(device) && (
-                    <div><strong>📍 Current Device - Live Tracking</strong></div>
+                    <div><strong>📍 Current Device - Real-time Tracking</strong></div>
                   )}
                 </div>
               </div>
@@ -645,7 +684,7 @@ const shouldUpdateMap = (currentDevices, lastPositions, lastCount) => {
   if (Math.abs(currentDevices.length - lastCount) > 0) return true;
   if (lastPositions.length === 0) return true;
 
-  const significantMoveThreshold = 0.00001;
+  const significantMoveThreshold = 0.000001; // More sensitive threshold for real-time
   
   for (const currentDevice of currentDevices) {
     const lastPosition = lastPositions.find(pos => pos.device_id === currentDevice.device_id);
@@ -748,8 +787,8 @@ const MapView = ({ devices, userLocation }) => {
     const now = new Date();
     const diffSeconds = (now - lastUpdate) / 1000;
     
-    if (diffSeconds > 30) return '#dc2626';
-    if (diffSeconds > 15) return '#d97706';
+    if (diffSeconds > 10) return '#dc2626'; // More sensitive for real-time
+    if (diffSeconds > 5) return '#d97706'; // More sensitive for real-time
     return '#059669';
   };
 
@@ -760,8 +799,8 @@ const MapView = ({ devices, userLocation }) => {
     const now = new Date();
     const diffSeconds = (now - lastUpdate) / 1000;
     
-    if (diffSeconds > 30) return 'Offline';
-    if (diffSeconds > 15) return 'Stale';
+    if (diffSeconds > 10) return 'Offline'; // More sensitive for real-time
+    if (diffSeconds > 5) return 'Stale'; // More sensitive for real-time
     return 'Live';
   };
 
@@ -810,7 +849,7 @@ const MapView = ({ devices, userLocation }) => {
       <MapController onUserInteraction={handleUserInteraction} />
       
       {mapReady && (
-        <StableMapUpdater 
+        <RealTimeMapUpdater 
           devices={devices} 
           userInteracting={userInteracting} 
           campusBounds={campusBounds} 
@@ -837,7 +876,7 @@ const MapView = ({ devices, userLocation }) => {
       )}
       
       {validDevices.length > 0 && (
-        <StableDevicesRenderer
+        <RealTimeDevicesRenderer
           devices={validDevices}
           campusManager={campusManager}
           getMarkerColor={getMarkerColor}

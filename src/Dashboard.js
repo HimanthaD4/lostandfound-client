@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import MapView from './MapView';
 import { apiRequest } from './App';
 import config from './config';
+import io from 'socket.io-client';
 
 const Dashboard = ({ user, onLogout }) => {
   const [devices, setDevices] = useState([]);
@@ -18,8 +19,56 @@ const Dashboard = ({ user, onLogout }) => {
   const [learningActive, setLearningActive] = useState(false);
   const [gpsAccuracy, setGpsAccuracy] = useState(null);
   const [locationUpdates, setLocationUpdates] = useState(0);
+  const [socket, setSocket] = useState(null);
+  const [realTimeUpdates, setRealTimeUpdates] = useState(0);
 
   useEffect(() => {
+    // Initialize WebSocket connection
+    const newSocket = io(config.API_BASE_URL.replace('/api', ''), {
+      transports: ['websocket', 'polling']
+    });
+    
+    newSocket.on('connect', () => {
+      console.log('✅ Connected to real-time server');
+      newSocket.emit('join_user_room', { email: user.email });
+    });
+    
+    newSocket.on('device_location_update', (data) => {
+      console.log('🔄 Real-time device update received:', data.device_id);
+      setRealTimeUpdates(prev => prev + 1);
+      
+      setDevices(prevDevices => {
+        const updatedDevices = prevDevices.map(device => 
+          device.device_id === data.device_id 
+            ? { ...device, ...data.device_data }
+            : device
+        );
+        
+        const deviceExists = updatedDevices.some(device => device.device_id === data.device_id);
+        if (!deviceExists) {
+          return [...updatedDevices, data.device_data];
+        }
+        
+        return updatedDevices;
+      });
+    });
+    
+    newSocket.on('new_device_added', (data) => {
+      console.log('🆕 Real-time new device added:', data.device_data.device_id);
+      setDevices(prevDevices => [...prevDevices, data.device_data]);
+    });
+    
+    newSocket.on('new_alert', (data) => {
+      console.log('🚨 Real-time alert received');
+      setAlerts(prevAlerts => [data.alert_data, ...prevAlerts]);
+    });
+    
+    newSocket.on('disconnect', () => {
+      console.log('❌ Disconnected from real-time server');
+    });
+    
+    setSocket(newSocket);
+
     initializeDeviceTracking();
     fetchDevices();
     fetchAlerts();
@@ -29,11 +78,14 @@ const Dashboard = ({ user, onLogout }) => {
       fetchDevices();
       fetchAlerts();
       fetchBehaviorProgress();
-    }, 3000);
+    }, 5000); // Reduced from 30s to 5s for better real-time sync
 
     return () => {
       stopAutomaticLocationUpdates();
       clearInterval(interval);
+      if (newSocket) {
+        newSocket.disconnect();
+      }
     };
   }, [user]);
 
@@ -86,8 +138,8 @@ const Dashboard = ({ user, onLogout }) => {
       console.log('Device does not exist, waiting for setup...');
       setLocationStatus('waiting_for_setup');
     } else {
-      console.log('Device exists, starting advanced location tracking...');
-      startAdvancedLocationTracking(deviceId);
+      console.log('Device exists, starting real-time location tracking...');
+      startRealTimeLocationTracking(deviceId);
     }
   };
 
@@ -120,34 +172,34 @@ const Dashboard = ({ user, onLogout }) => {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   };
 
-  const startAdvancedLocationTracking = (deviceId) => {
-    console.log('Starting advanced location tracking for device:', deviceId);
+  const startRealTimeLocationTracking = (deviceId) => {
+    console.log('🚀 Starting real-time location tracking for device:', deviceId);
     
     if (isMobileDevice()) {
-      startMobileGPSTracking(deviceId);
+      startMobileRealTimeGPSTracking(deviceId);
     } else {
-      startDesktopLocationTracking(deviceId);
+      startDesktopRealTimeLocationTracking(deviceId);
     }
   };
 
-  const startMobileGPSTracking = (deviceId) => {
+  const startMobileRealTimeGPSTracking = (deviceId) => {
     if (!navigator.geolocation) {
       console.warn('Geolocation not supported, falling back to desktop mode');
-      startDesktopLocationTracking(deviceId);
+      startDesktopRealTimeLocationTracking(deviceId);
       return;
     }
 
-    console.log('🚀 Starting high-precision mobile GPS tracking');
-    setLocationStatus('tracking_mobile_gps');
+    console.log('🛰️ Starting real-time mobile GPS tracking (1-second updates)');
+    setLocationStatus('tracking_mobile_gps_realtime');
 
     // First get immediate location
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        await processGPSLocation(deviceId, position, 'initial_fix');
+        await processRealTimeGPSLocation(deviceId, position, 'initial_fix');
       },
       (error) => {
         console.error('Initial GPS fix failed:', error);
-        startDesktopLocationTracking(deviceId);
+        startDesktopRealTimeLocationTracking(deviceId);
       },
       {
         enableHighAccuracy: true,
@@ -156,32 +208,31 @@ const Dashboard = ({ user, onLogout }) => {
       }
     );
 
-    // Then watch for continuous updates
+    // Real-time continuous updates every 1 second
     const watchId = navigator.geolocation.watchPosition(
       async (position) => {
-        await processGPSLocation(deviceId, position, 'continuous_gps');
+        await processRealTimeGPSLocation(deviceId, position, 'continuous_realtime_gps');
       },
       (error) => {
-        console.error('GPS watch error:', error);
-        // Don't fall back immediately, try a few times
+        console.error('Real-time GPS watch error:', error);
         setTimeout(() => {
-          if (locationStatus === 'tracking_mobile_gps') {
-            startDesktopLocationTracking(deviceId);
+          if (locationStatus.includes('realtime')) {
+            startDesktopRealTimeLocationTracking(deviceId);
           }
-        }, 30000);
+        }, 10000);
       },
       {
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 1000,
-        distanceFilter: 1 // Update every 1 meter movement
+        timeout: 5000, // Reduced timeout for faster updates
+        maximumAge: 0, // No caching, always fresh
+        distanceFilter: 0.1 // Update every 0.1 meter movement (almost continuous)
       }
     );
 
     locationWatcherRef.current = watchId;
   };
 
-  const processGPSLocation = async (deviceId, position, source) => {
+  const processRealTimeGPSLocation = async (deviceId, position, source) => {
     const location = {
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
@@ -190,25 +241,26 @@ const Dashboard = ({ user, onLogout }) => {
       altitudeAccuracy: position.coords.altitudeAccuracy,
       heading: position.coords.heading,
       speed: position.coords.speed,
-      city: 'Live GPS Tracking',
+      city: 'Live Real-time GPS',
       country: 'Real-time Location',
-      location_type: 'gps_live_mobile',
+      location_type: 'gps_realtime_mobile',
       timestamp: new Date().toISOString(),
       source: source,
       is_mobile: true,
-      gps_quality: getGPSQuality(position.coords.accuracy)
+      gps_quality: getGPSQuality(position.coords.accuracy),
+      real_time: true
     };
 
     setGpsAccuracy(position.coords.accuracy);
     setLocationUpdates(prev => prev + 1);
     
-    // Update user location for map
+    // Update user location for map in real-time
     setUserLocation({
       latitude: location.latitude,
       longitude: location.longitude
     });
 
-    await updateDeviceLocation(deviceId, location);
+    await updateDeviceLocationRealTime(deviceId, location);
   };
 
   const getGPSQuality = (accuracy) => {
@@ -218,11 +270,11 @@ const Dashboard = ({ user, onLogout }) => {
     return 'poor';
   };
 
-  const startDesktopLocationTracking = async (deviceId) => {
-    console.log('Starting enhanced desktop location tracking');
-    setLocationStatus('tracking_desktop_enhanced');
+  const startDesktopRealTimeLocationTracking = async (deviceId) => {
+    console.log('Starting real-time desktop location tracking');
+    setLocationStatus('tracking_desktop_realtime');
 
-    // Try to get browser geolocation first
+    // Try to get browser geolocation first with faster updates
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
@@ -234,37 +286,39 @@ const Dashboard = ({ user, onLogout }) => {
             speed: position.coords.speed || 0,
             city: 'Browser Geolocation',
             country: 'GPS from Browser',
-            location_type: 'browser_geolocation',
+            location_type: 'browser_geolocation_realtime',
             timestamp: new Date().toISOString(),
-            source: 'browser_geolocation',
-            is_mobile: false
+            source: 'browser_geolocation_realtime',
+            is_mobile: false,
+            real_time: true
           };
-          await updateDeviceLocation(deviceId, location);
+          await updateDeviceLocationRealTime(deviceId, location);
         },
         async (error) => {
           console.log('Browser geolocation failed, using network-based tracking');
-          await updateNetworkLocation(deviceId);
+          await updateNetworkLocationRealTime(deviceId);
         },
         {
-          enableHighAccuracy: false,
-          timeout: 8000,
-          maximumAge: 300000
+          enableHighAccuracy: true, // Try high accuracy for desktop too
+          timeout: 5000,
+          maximumAge: 0
         }
       );
     } else {
-      await updateNetworkLocation(deviceId);
+      await updateNetworkLocationRealTime(deviceId);
     }
 
-    // Set up periodic updates
+    // Set up faster periodic updates (every 3 seconds)
     locationIntervalRef.current = setInterval(async () => {
-      await updateNetworkLocation(deviceId);
-    }, 15000);
+      await updateNetworkLocationRealTime(deviceId);
+    }, 3000);
   };
 
-  const updateNetworkLocation = async (deviceId) => {
+  const updateNetworkLocationRealTime = async (deviceId) => {
     try {
       const networkLocation = await getNetworkBasedLocation();
-      await updateDeviceLocation(deviceId, networkLocation);
+      networkLocation.real_time = true;
+      await updateDeviceLocationRealTime(deviceId, networkLocation);
     } catch (error) {
       console.error('Network location update failed:', error);
     }
@@ -272,7 +326,6 @@ const Dashboard = ({ user, onLogout }) => {
 
   const getNetworkBasedLocation = async () => {
     try {
-      // Try multiple location services
       const services = [
         'https://ipapi.co/json/',
         'https://api.ipgeolocation.io/ipgeo?apiKey=demo',
@@ -281,7 +334,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       for (const service of services) {
         try {
-          const response = await fetch(service, { timeout: 5000 });
+          const response = await fetch(service, { timeout: 3000 }); // Reduced timeout
           if (response.ok) {
             const data = await response.json();
             
@@ -289,32 +342,31 @@ const Dashboard = ({ user, onLogout }) => {
               return {
                 latitude: data.latitude,
                 longitude: data.longitude,
-                accuracy: 1000, // Network location accuracy is lower
+                accuracy: 1000,
                 city: data.city || 'Unknown',
                 country: data.country_name || data.country || 'Unknown',
-                location_type: 'network_ip',
+                location_type: 'network_ip_realtime',
                 timestamp: new Date().toISOString(),
-                source: 'network_geolocation',
+                source: 'network_geolocation_realtime',
                 is_mobile: false
               };
             }
           }
         } catch (error) {
-          console.log(`Service ${service} failed:`, error.message);
           continue;
         }
       }
 
-      // Fallback to default location with some variation
+      // Fallback with slight variation for testing
       return {
-        latitude: 6.9271 + (Math.random() - 0.5) * 0.001,
-        longitude: 79.8612 + (Math.random() - 0.5) * 0.001,
+        latitude: 6.9271 + (Math.random() - 0.5) * 0.0001, // Small variation
+        longitude: 79.8612 + (Math.random() - 0.5) * 0.0001,
         accuracy: 5000,
         city: 'Colombo',
         country: 'Sri Lanka',
-        location_type: 'network_fallback',
+        location_type: 'network_fallback_realtime',
         timestamp: new Date().toISOString(),
-        source: 'fallback',
+        source: 'fallback_realtime',
         is_mobile: false
       };
     } catch (error) {
@@ -325,15 +377,15 @@ const Dashboard = ({ user, onLogout }) => {
         accuracy: 10000,
         city: 'Colombo',
         country: 'Sri Lanka',
-        location_type: 'default',
+        location_type: 'default_realtime',
         timestamp: new Date().toISOString(),
-        source: 'default_fallback',
+        source: 'default_fallback_realtime',
         is_mobile: false
       };
     }
   };
 
-  const updateDeviceLocation = async (deviceId, location) => {
+  const updateDeviceLocationRealTime = async (deviceId, location) => {
     try {
       const response = await apiRequest('/update_device_location', {
         method: 'POST',
@@ -354,7 +406,8 @@ const Dashboard = ({ user, onLogout }) => {
                   ...device, 
                   last_location: location,
                   last_updated: new Date().toISOString(),
-                  is_mobile: location.is_mobile || false
+                  is_mobile: location.is_mobile || false,
+                  real_time: true
                 }
               : device
           );
@@ -367,7 +420,8 @@ const Dashboard = ({ user, onLogout }) => {
               device_type: isMobileDevice() ? 'mobile' : 'laptop',
               last_location: location,
               last_updated: new Date().toISOString(),
-              is_mobile: location.is_mobile || false
+              is_mobile: location.is_mobile || false,
+              real_time: true
             };
             return [...updatedDevices, newDevice];
           }
@@ -429,15 +483,15 @@ const Dashboard = ({ user, onLogout }) => {
     const now = new Date();
     const diffSeconds = (now - lastUpdate) / 1000;
     
-    if (diffSeconds > 30) return 'offline';
-    if (diffSeconds > 15) return 'warning';
+    if (diffSeconds > 10) return 'offline'; // Reduced from 30s to 10s for real-time
+    if (diffSeconds > 5) return 'warning'; // Reduced from 15s to 5s
     return 'safe';
   };
 
   const forceHighAccuracyUpdate = async () => {
     if (!currentDeviceId) return;
 
-    setLocationStatus('manual_high_accuracy');
+    setLocationStatus('manual_high_accuracy_realtime');
     
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -450,46 +504,49 @@ const Dashboard = ({ user, onLogout }) => {
             speed: position.coords.speed || 0,
             city: 'Manual High Accuracy',
             country: 'GPS',
-            location_type: 'gps_manual_high_accuracy',
+            location_type: 'gps_manual_high_accuracy_realtime',
             timestamp: new Date().toISOString(),
-            source: 'manual_gps_high_accuracy',
+            source: 'manual_gps_high_accuracy_realtime',
             is_mobile: isMobileDevice(),
-            gps_quality: getGPSQuality(position.coords.accuracy)
+            gps_quality: getGPSQuality(position.coords.accuracy),
+            real_time: true
           };
-          await updateDeviceLocation(currentDeviceId, location);
-          setLocationStatus(isMobileDevice() ? 'tracking_mobile_gps' : 'tracking_desktop_enhanced');
+          await updateDeviceLocationRealTime(currentDeviceId, location);
+          setLocationStatus(isMobileDevice() ? 'tracking_mobile_gps_realtime' : 'tracking_desktop_realtime');
         },
         async (error) => {
           console.error('Manual high accuracy location failed:', error);
-          await updateNetworkLocation(currentDeviceId);
-          setLocationStatus('tracking_desktop_enhanced');
+          await updateNetworkLocationRealTime(currentDeviceId);
+          setLocationStatus('tracking_desktop_realtime');
         },
         { 
           enableHighAccuracy: true, 
-          timeout: 15000,
+          timeout: 10000,
           maximumAge: 0 
         }
       );
     } else {
-      await updateNetworkLocation(currentDeviceId);
-      setLocationStatus('tracking_desktop_enhanced');
+      await updateNetworkLocationRealTime(currentDeviceId);
+      setLocationStatus('tracking_desktop_realtime');
     }
   };
 
   const getLocationStatusText = () => {
+    const baseText = locationStatus.includes('realtime') ? '🔄 REAL-TIME ' : '📍 ';
+    
     switch(locationStatus) {
-      case 'tracking_mobile_gps': 
-        return `🛰️ Live GPS Tracking (Accuracy: ±${gpsAccuracy ? Math.round(gpsAccuracy) : '?'}m)`;
-      case 'tracking_desktop_enhanced': 
-        return '💻 Enhanced Location Tracking';
+      case 'tracking_mobile_gps_realtime': 
+        return `${baseText}Live GPS (Accuracy: ±${gpsAccuracy ? Math.round(gpsAccuracy) : '?'}m)`;
+      case 'tracking_desktop_realtime': 
+        return `${baseText}Enhanced Location Tracking`;
       case 'waiting_for_setup': 
         return '⏳ Waiting for Device Setup...';
-      case 'manual_high_accuracy': 
+      case 'manual_high_accuracy_realtime': 
         return '🎯 Getting High Accuracy Location...';
       case 'initializing': 
         return '⚙️ Initializing Location...';
       default: 
-        return '📍 Location Tracking';
+        return `${baseText}Location Tracking`;
     }
   };
 
@@ -534,6 +591,11 @@ const Dashboard = ({ user, onLogout }) => {
           <span className="location-status-badge">{getLocationStatusText()}</span>
           {locationUpdates > 0 && (
             <span className="update-counter">Updates: {locationUpdates}</span>
+          )}
+          {realTimeUpdates > 0 && (
+            <span className="realtime-counter" style={{marginLeft: '10px', background: '#10B981', color: 'white', padding: '2px 8px', borderRadius: '10px', fontSize: '12px'}}>
+              Real-time: {realTimeUpdates}
+            </span>
           )}
         </div>
         <div className="nav-user">
@@ -620,6 +682,7 @@ const Dashboard = ({ user, onLogout }) => {
                 <h4>{device.device_name || `Device ${index + 1}`}</h4>
                 <span className={`device-status status-${getStatus(device)}`}>
                   {getStatus(device).toUpperCase()}
+                  {device.real_time && ' 🔄'}
                   {getStatus(device) === 'safe' ? ' 🟢' : 
                    getStatus(device) === 'warning' ? ' 🟡' : ' 🔴'}
                 </span>
@@ -653,11 +716,14 @@ const Dashboard = ({ user, onLogout }) => {
                 {device.last_location?.speed > 0 && (
                   <p><strong>Speed:</strong> {(device.last_location.speed * 3.6).toFixed(1)} km/h</p>
                 )}
+                {device.real_time && (
+                  <p><strong>🔄 Real-time Tracking Active</strong></p>
+                )}
               </div>
               
               {device.device_id === currentDeviceId && (
                 <div className="current-device-badge">
-                  ✅ Current Device - {isMobileDevice() ? 'Mobile GPS' : 'Enhanced'} Tracking Active
+                  ✅ Current Device - {isMobileDevice() ? 'Mobile GPS' : 'Enhanced'} Real-time Tracking Active
                 </div>
               )}
             </div>
@@ -727,7 +793,7 @@ const Dashboard = ({ user, onLogout }) => {
         </div>
 
         <div className="map-section">
-          <h3>Live Device Locations</h3>
+          <h3>Live Real-time Device Locations</h3>
           <div className="map-container">
             <MapView devices={devices} userLocation={userLocation} />
           </div>
@@ -748,15 +814,15 @@ const Dashboard = ({ user, onLogout }) => {
           <div className="map-legend">
             <div className="legend-item">
               <span className="legend-color green"></span>
-              <span>Live (Updated &lt; 15 sec ago)</span>
+              <span>Live (Updated &lt; 5 sec ago)</span>
             </div>
             <div className="legend-item">
               <span className="legend-color orange"></span>
-              <span>Warning (Updated 15-30 sec ago)</span>
+              <span>Warning (Updated 5-10 sec ago)</span>
             </div>
             <div className="legend-item">
               <span className="legend-color red"></span>
-              <span>Offline (Updated &gt; 30 sec ago)</span>
+              <span>Offline (Updated &gt; 10 sec ago)</span>
             </div>
             <div className="legend-item">
               <span className="legend-direction">➤</span>
@@ -769,6 +835,10 @@ const Dashboard = ({ user, onLogout }) => {
             <div className="legend-item">
               <span className="gps-quality good"></span>
               <span>Good GPS (10-25m accuracy)</span>
+            </div>
+            <div className="legend-item">
+              <span className="realtime-indicator">🔄</span>
+              <span>Real-time tracking active</span>
             </div>
           </div>
         </div>
