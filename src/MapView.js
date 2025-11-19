@@ -13,22 +13,13 @@ L.Icon.Default.mergeOptions({
 
 class CampusManager {
   constructor(fixedLocation = null) {
-    this.fixedLocation = fixedLocation;
-    this.campusBounds = this.generateCampusBounds();
-    this.sections = this.generateCampusSections();
-  }
-
-  setFixedLocation(location) {
-    this.fixedLocation = location;
+    this.fixedLocation = fixedLocation || { latitude: 6.9271, longitude: 79.8612 };
     this.campusBounds = this.generateCampusBounds();
     this.sections = this.generateCampusSections();
   }
 
   generateCampusBounds() {
-    // Use fixed location if available, otherwise use default
-    const baseLocation = this.fixedLocation || { latitude: 6.9271, longitude: 79.8612 };
-    
-    const { latitude, longitude } = baseLocation;
+    const { latitude, longitude } = this.fixedLocation;
     const { CAMPUS_WIDTH, CAMPUS_HEIGHT } = config.CAMPUS_SETTINGS;
     
     const southWest = [
@@ -648,49 +639,23 @@ const MapView = ({ devices, userLocation }) => {
   const [mapReady, setMapReady] = useState(false);
   const [campusGenerated, setCampusGenerated] = useState(false);
 
-  // Get a fixed location for campus (not based on device location)
-  const getFixedCampusLocation = () => {
-    // Use a fixed location for campus that doesn't depend on device locations
-    // This ensures campus stays fixed while devices can move freely
-    return {
-      latitude: 6.9271,
-      longitude: 79.8612
-    };
-  };
-
+  // Always generate campus with fixed location
   useEffect(() => {
-    // Generate campus only once with fixed location, not based on device location
     if (!campusGenerated && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
       try {
         console.log('🎓 Generating fixed campus at predefined location');
-        const fixedLocation = getFixedCampusLocation();
+        const fixedLocation = { latitude: 6.9271, longitude: 79.8612 };
         const manager = new CampusManager(fixedLocation);
         setCampusManager(manager);
         setCampusSections(manager.sections);
         setCampusBounds(manager.campusBounds);
         setCampusGenerated(true);
         
-        // Store campus location in localStorage for persistence
-        localStorage.setItem('campusLocation', JSON.stringify(fixedLocation));
         console.log('✅ Campus generated with 4 sections at fixed location');
+        console.log('📍 Campus bounds:', manager.campusBounds);
+        console.log('🏢 Campus sections:', manager.sections.length);
       } catch (error) {
         console.error('Error creating campus sections:', error);
-      }
-    } else if (!campusGenerated) {
-      // Check if we have a stored campus location
-      const storedCampusLocation = localStorage.getItem('campusLocation');
-      if (storedCampusLocation && config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
-        try {
-          const location = JSON.parse(storedCampusLocation);
-          console.log('🎓 Using stored campus location:', location);
-          const manager = new CampusManager(location);
-          setCampusManager(manager);
-          setCampusSections(manager.sections);
-          setCampusBounds(manager.campusBounds);
-          setCampusGenerated(true);
-        } catch (error) {
-          console.error('Error using stored campus location:', error);
-        }
       }
     }
   }, [campusGenerated]);
