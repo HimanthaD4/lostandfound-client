@@ -867,3 +867,4 @@ const MapView = ({ devices, userLocation }) => {
 };
 
 export default MapView;
+

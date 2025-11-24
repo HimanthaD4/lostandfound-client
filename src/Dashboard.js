@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import MapView from './MapView';
+import MapView from './MapView.js';
 import { apiRequest } from './App';
 import config from './config';
 
