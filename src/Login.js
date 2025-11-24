@@ -59,7 +59,7 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
         <button type="submit" className="btn">Login</button>
       </form>
       <div className="auth-switch">
-        Don't have an account?{' '}
+        Dont have an account?{' '}
         <span className="auth-link" onClick={onSwitchToRegister}>
           Register here
         </span>
