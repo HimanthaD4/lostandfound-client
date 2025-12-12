@@ -12,18 +12,19 @@ L.Icon.Default.mergeOptions({
 });
 
 class CampusManager {
-  constructor(userLocation) {
-    this.userLocation = userLocation;
+  constructor(firstDeviceLocation) {
+    this.firstDeviceLocation = firstDeviceLocation;
     this.campusBounds = this.generateCampusBounds();
     this.sections = this.generateCampusSections();
   }
 
   generateCampusBounds() {
-    if (!this.userLocation) {
-      this.userLocation = { latitude: 6.9271, longitude: 79.8612 };
+    if (!this.firstDeviceLocation) {
+      // Default fallback if no first device location
+      return [[6.9270, 79.8610], [6.9272, 79.8612]];
     }
     
-    const { latitude, longitude } = this.userLocation;
+    const { latitude, longitude } = this.firstDeviceLocation;
     const { CAMPUS_WIDTH, CAMPUS_HEIGHT } = config.CAMPUS_SETTINGS;
     
     const southWest = [
@@ -223,7 +224,7 @@ class CampusManager {
   }
 }
 
-const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality) => {
+const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality, isFirstDevice = false) => {
   if (isMobile) {
     const pulseAnimation = isCurrentDevice ? `
       @keyframes pulse {
@@ -245,6 +246,24 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
         border: 2px solid white;
         box-shadow: 0 1px 3px rgba(0,0,0,0.3);
       "></div>
+    ` : '';
+
+    const firstDeviceIndicator = isFirstDevice ? `
+      <div style="
+        position: absolute;
+        bottom: -15px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #6366F1;
+        color: white;
+        padding: 2px 6px;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: bold;
+        white-space: nowrap;
+        border: 2px solid white;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      ">🏫 CAMPUS</div>
     ` : '';
 
     return L.divIcon({
@@ -297,12 +316,31 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           "></div>
           
           ${qualityIndicator}
+          ${firstDeviceIndicator}
         </div>
       `,
       iconSize: [32, 32],
       iconAnchor: [16, 16],
     });
   }
+
+  const firstDeviceIndicator = isFirstDevice ? `
+    <div style="
+      position: absolute;
+      bottom: -15px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #6366F1;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: bold;
+      white-space: nowrap;
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    ">🏫 CAMPUS</div>
+  ` : '';
 
   return L.divIcon({
     className: 'computer-device-icon',
@@ -324,6 +362,7 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
           left: 50%;
           transform: translate(-50%, -50%);
         "></div>
+        ${firstDeviceIndicator}
       </div>
     `,
     iconSize: [24, 24],
@@ -496,7 +535,9 @@ function StableMapUpdater({ devices, userInteracting, campusBounds }) {
   return null;
 }
 
-function CampusSectionsRenderer({ sections, currentDeviceLocation }) {
+function CampusSectionsRenderer({ sections, firstDevice }) {
+  if (!firstDevice || !firstDevice.last_location) return null;
+  
   return (
     <>
       {sections.map((section) => (
@@ -517,18 +558,19 @@ function CampusSectionsRenderer({ sections, currentDeviceLocation }) {
               <p><strong>Type:</strong> <span className={`section-${section.type}`}>{section.type.toUpperCase()}</span></p>
               <p><strong>Description:</strong> {section.description}</p>
               <p><strong>Size:</strong> {section.width} × {section.height}</p>
-              {currentDeviceLocation && (
-                <p>
-                  <strong>Distance:</strong> {Math.round(
-                    new CampusManager().calculateDistance(
-                      currentDeviceLocation.lat,
-                      currentDeviceLocation.lng,
-                      section.coordinates[0][0],
-                      section.coordinates[0][1]
-                    )
-                  )} meters
-                </p>
-              )}
+              <p>
+                <strong>Centered Around:</strong> {firstDevice.device_name || 'First Device'}
+              </p>
+              <p>
+                <strong>Distance from Center:</strong> {Math.round(
+                  new CampusManager(firstDevice.last_location).calculateDistance(
+                    firstDevice.last_location.latitude,
+                    firstDevice.last_location.longitude,
+                    section.coordinates[0][0],
+                    section.coordinates[0][1]
+                  )
+                )} meters
+              </p>
             </div>
           </Popup>
         </Polygon>
@@ -556,6 +598,7 @@ function CampusBoundaryRenderer({ campusBounds }) {
         <div className="campus-section-popup">
           <h4>🏫 University Campus</h4>
           <p><strong>Main Campus Area</strong></p>
+          <p><strong>Centered Around:</strong> First Registered Device</p>
           <p><strong>Dimensions:</strong> 20m × 20m</p>
           <p><strong>Sections:</strong> 4 properly separated rectangular sections</p>
         </div>
@@ -564,12 +607,13 @@ function CampusBoundaryRenderer({ campusBounds }) {
   );
 }
 
-function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection }) {
+function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection, firstDevice }) {
   return (
     <>
       {devices.map((device, index) => {
         const currentSection = getCurrentSection(device);
         const gpsQuality = device.last_location?.gps_quality;
+        const isFirstDevice = firstDevice && device.device_id === firstDevice.device_id;
         
         return (
           <Marker
@@ -581,12 +625,26 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
               device.last_location.speed || 0,
               device.is_mobile,
               isCurrentDevice(device),
-              gpsQuality
+              gpsQuality,
+              isFirstDevice
             )}
           >
             <Popup>
               <div className="popup-content">
                 <strong>{device.device_name || `Device ${index + 1}`}</strong>
+                {isFirstDevice && (
+                  <div style={{
+                    background: '#6366F1',
+                    color: 'white',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    margin: '5px 0'
+                  }}>
+                    🏫 CAMPUS CENTER
+                  </div>
+                )}
                 <div className="popup-details">
                   <div><strong>Type:</strong> {device.is_mobile ? '📱 Mobile' : '💻 Computer'}</div>
                   <div><strong>Status:</strong> {getStatusText(device)}</div>
@@ -693,45 +751,56 @@ const MapView = ({ devices, userLocation }) => {
   const [campusSections, setCampusSections] = useState([]);
   const [campusBounds, setCampusBounds] = useState(null);
   const [mapReady, setMapReady] = useState(false);
+  const [firstDevice, setFirstDevice] = useState(null);
 
-  const getFallbackLocation = () => {
-    if (devices.length > 0 && devices[0].last_location) {
-      return {
-        latitude: devices[0].last_location.latitude,
-        longitude: devices[0].last_location.longitude
-      };
-    }
-    return {
-      latitude: 6.9271,
-      longitude: 79.8612
-    };
-  };
-
+  // Find the first device (oldest by created_at)
   useEffect(() => {
-    const effectiveUserLocation = userLocation || getFallbackLocation();
-    
-    if (config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS) {
+    if (devices.length > 0) {
+      // Sort devices by created_at to find the first one
+      const sortedDevices = [...devices].sort((a, b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeA - timeB;
+      });
+      
+      const first = sortedDevices[0];
+      if (first && first.last_location) {
+        setFirstDevice(first);
+        console.log('First device identified:', first.device_name || first.device_id);
+      }
+    }
+  }, [devices]);
+
+  // Create campus around the first device
+  useEffect(() => {
+    if (config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS && firstDevice && firstDevice.last_location) {
       try {
-        const manager = new CampusManager(effectiveUserLocation);
+        const manager = new CampusManager(firstDevice.last_location);
+        setCampusManager(manager);
+        setCampusSections(manager.sections);
+        setCampusBounds(manager.campusBounds);
+        console.log('Campus created around first device:', firstDevice.device_name);
+      } catch (error) {
+        console.error('Error creating campus sections:', error);
+      }
+    } else if (devices.length === 0 && userLocation) {
+      // Fallback for when no devices but we have user location (during setup)
+      try {
+        const manager = new CampusManager(userLocation);
         setCampusManager(manager);
         setCampusSections(manager.sections);
         setCampusBounds(manager.campusBounds);
       } catch (error) {
-        console.error('Error creating campus sections:', error);
+        console.error('Error creating fallback campus:', error);
       }
     }
-  }, [userLocation, devices]);
+  }, [firstDevice, devices.length, userLocation]);
 
   const validDevices = devices.filter(device => 
     device.last_location && 
     device.last_location.latitude && 
     device.last_location.longitude
   );
-
-  const currentDeviceLocation = validDevices.length > 0 ? {
-    lat: validDevices[0].last_location.latitude,
-    lng: validDevices[0].last_location.longitude
-  } : null;
 
   const handleUserInteraction = (interacting) => {
     setUserInteracting(interacting);
@@ -778,12 +847,19 @@ const MapView = ({ devices, userLocation }) => {
   };
 
   const getInitialCenter = () => {
+    // Try to center on first device if available
+    if (firstDevice && firstDevice.last_location) {
+      return [firstDevice.last_location.latitude, firstDevice.last_location.longitude];
+    }
+    // Fallback to user location
     if (userLocation) {
       return [userLocation.latitude, userLocation.longitude];
     }
+    // Fallback to any device
     if (validDevices.length > 0) {
       return [validDevices[0].last_location.latitude, validDevices[0].last_location.longitude];
     }
+    // Default fallback
     return [6.9271, 79.8612];
   };
 
@@ -832,7 +908,7 @@ const MapView = ({ devices, userLocation }) => {
       {campusSections.length > 0 && (
         <CampusSectionsRenderer 
           sections={campusSections} 
-          currentDeviceLocation={currentDeviceLocation}
+          firstDevice={firstDevice}
         />
       )}
       
@@ -844,6 +920,7 @@ const MapView = ({ devices, userLocation }) => {
           getStatusText={getStatusText}
           isCurrentDevice={isCurrentDevice}
           getCurrentSection={getCurrentSection}
+          firstDevice={firstDevice}
         />
       )}
 
@@ -854,8 +931,8 @@ const MapView = ({ devices, userLocation }) => {
               <strong>No Active Devices</strong>
               <div className="popup-details">
                 <p>Waiting for device location updates...</p>
-                {campusSections.length > 0 && (
-                  <p><strong>Campus Ready:</strong> {campusSections.length} properly separated rectangular sections</p>
+                {firstDevice && (
+                  <p><strong>Campus Center:</strong> Will be created around first registered device</p>
                 )}
               </div>
             </div>
@@ -867,4 +944,3 @@ const MapView = ({ devices, userLocation }) => {
 };
 
 export default MapView;
-
