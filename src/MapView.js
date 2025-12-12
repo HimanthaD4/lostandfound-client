@@ -20,7 +20,6 @@ class CampusManager {
 
   generateCampusBounds() {
     if (!this.campusCenterLocation) {
-      // Default fallback if no campus center location
       return [[6.9270, 79.8610], [6.9272, 79.8612]];
     }
     
@@ -224,7 +223,7 @@ class CampusManager {
   }
 }
 
-const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality, isFirstDevice = false) => {
+const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurrentDevice, gpsQuality, simulatedMovement, isFirstDevice = false) => {
   if (isMobile) {
     const pulseAnimation = isCurrentDevice ? `
       @keyframes pulse {
@@ -324,6 +323,7 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
     });
   }
 
+  // Desktop device icon with movement indicator
   const firstDeviceIndicator = isFirstDevice ? `
     <div style="
       position: absolute;
@@ -342,31 +342,53 @@ const createAdvancedDirectionalIcon = (color, heading, speed, isMobile, isCurren
     ">🏫 CAMPUS</div>
   ` : '';
 
+  const simulationIndicator = simulatedMovement ? `
+    <div style="
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #10B981;
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      animation: blink 1s infinite;
+    "></div>
+    <style>
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+    </style>
+  ` : '';
+
   return L.divIcon({
     className: 'computer-device-icon',
     html: `
       <div style="
         position: relative;
-        width: 24px;
-        height: 24px;
+        width: 28px;
+        height: 28px;
       ">
         <div style="
-          width: 20px;
-          height: 20px;
+          width: 22px;
+          height: 22px;
           background: ${color};
           border: 2px solid white;
           border-radius: 50%;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
           position: absolute;
           top: 50%;
           left: 50%;
           transform: translate(-50%, -50%);
         "></div>
+        ${simulationIndicator}
         ${firstDeviceIndicator}
       </div>
     `,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
   });
 };
 
@@ -607,6 +629,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
         const currentSection = getCurrentSection(device);
         const gpsQuality = device.last_location?.gps_quality;
         const isCampusCenterDevice = campusCenterDeviceId && device.device_id === campusCenterDeviceId;
+        const simulatedMovement = device.simulated_movement || false;
         
         return (
           <Marker
@@ -619,6 +642,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
               device.is_mobile,
               isCurrentDevice(device),
               gpsQuality,
+              simulatedMovement,
               isCampusCenterDevice
             )}
           >
@@ -641,6 +665,14 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                 <div className="popup-details">
                   <div><strong>Type:</strong> {device.is_mobile ? '📱 Mobile' : '💻 Computer'}</div>
                   <div><strong>Status:</strong> {getStatusText(device)}</div>
+                  {simulatedMovement && (
+                    <div>
+                      <strong>Simulated Movement:</strong> 
+                      <span style={{color: '#10B981', fontWeight: 'bold'}}> Active</span>
+                      <br/>
+                      <small>Network location with simulated movement for better UX</small>
+                    </div>
+                  )}
                   {gpsQuality && (
                     <div>
                       <strong>GPS Quality:</strong> 
@@ -755,10 +787,8 @@ const MapView = ({ devices, userLocation }) => {
   const [campusCenterDeviceId, setCampusCenterDeviceId] = useState(null);
   const [firstDevice, setFirstDevice] = useState(null);
 
-  // Find the first device and save campus center location
   useEffect(() => {
     if (devices.length > 0) {
-      // Find the first device (with the earliest created_at or first in list)
       let firstDeviceCandidate = null;
       let earliestTime = Infinity;
       
@@ -785,10 +815,8 @@ const MapView = ({ devices, userLocation }) => {
       if (firstDeviceCandidate) {
         setFirstDevice(firstDeviceCandidate);
         
-        // Check if we need to save a new campus center
         const savedCampusCenter = localStorage.getItem('campus_center');
         if (!savedCampusCenter && firstDeviceCandidate.last_location) {
-          // Save the campus center location when first device is registered
           const campusCenterData = {
             latitude: firstDeviceCandidate.last_location.latitude,
             longitude: firstDeviceCandidate.last_location.longitude,
@@ -809,7 +837,6 @@ const MapView = ({ devices, userLocation }) => {
     }
   }, [devices]);
 
-  // Load campus center from localStorage on initial load
   useEffect(() => {
     const savedCampusCenter = localStorage.getItem('campus_center');
     if (savedCampusCenter) {
@@ -827,18 +854,14 @@ const MapView = ({ devices, userLocation }) => {
     }
   }, []);
 
-  // Create campus using the saved campus center location (not device's current location)
   useEffect(() => {
     let campusLocation = null;
     
     if (campusCenterLocation) {
-      // Use saved fixed campus center location
       campusLocation = campusCenterLocation;
     } else if (firstDevice && firstDevice.last_location) {
-      // First time - use first device's location but don't save it yet (will be saved above)
       campusLocation = firstDevice.last_location;
     } else if (userLocation) {
-      // Fallback to user location
       campusLocation = userLocation;
     }
     
@@ -906,23 +929,18 @@ const MapView = ({ devices, userLocation }) => {
   };
 
   const getInitialCenter = () => {
-    // Try to center on campus center if available
     if (campusCenterLocation) {
       return [campusCenterLocation.latitude, campusCenterLocation.longitude];
     }
-    // Try to center on any device
     if (validDevices.length > 0) {
       return [validDevices[0].last_location.latitude, validDevices[0].last_location.longitude];
     }
-    // Fallback to user location
     if (userLocation) {
       return [userLocation.latitude, userLocation.longitude];
     }
-    // Default fallback
     return [6.9271, 79.8612];
   };
 
-  // Find the campus center device for display purposes
   const getCampusCenterDevice = () => {
     if (!campusCenterDeviceId) return firstDevice;
     
