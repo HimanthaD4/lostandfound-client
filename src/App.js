@@ -36,10 +36,20 @@ const apiRequest = async (endpoint, options = {}) => {
     console.error('Request URL:', url);
     
     if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
-      throw new Error(`Cannot connect to server at ${config.API_BASE_URL}. Please ensure:
-1. Backend server is running on port 5000
+      const isLocalhost = config.API_BASE_URL.includes('localhost');
+      
+      if (isLocalhost) {
+        throw new Error(`Cannot connect to local backend server at ${config.API_BASE_URL}. Please ensure:
+1. Backend server is running locally on port 5000
+2. Run command in backend folder: python app.py
+3. Check that the Flask server is running properly
+4. Your network connection is stable`);
+      } else {
+        throw new Error(`Cannot connect to server at ${config.API_BASE_URL}. Please ensure:
+1. Backend server is deployed and running
 2. Your network connection is stable
 3. No firewall is blocking the connection`);
+      }
     }
     
     throw error;
