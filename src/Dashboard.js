@@ -18,6 +18,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [learningActive, setLearningActive] = useState(false);
   const [gpsAccuracy, setGpsAccuracy] = useState(null);
   const [locationUpdates, setLocationUpdates] = useState(0);
+  const [realTimeDevices, setRealTimeDevices] = useState({});
+  const deviceUpdateTimeoutRef = useRef(null);
 
   useEffect(() => {
     initializeDeviceTracking();
@@ -34,6 +36,9 @@ const Dashboard = ({ user, onLogout }) => {
     return () => {
       stopAutomaticLocationUpdates();
       clearInterval(interval);
+      if (deviceUpdateTimeoutRef.current) {
+        clearTimeout(deviceUpdateTimeoutRef.current);
+      }
     };
   }, [user]);
 
@@ -156,7 +161,7 @@ const Dashboard = ({ user, onLogout }) => {
       }
     );
 
-    // Then watch for continuous updates
+    // Then watch for continuous updates with faster updates
     const watchId = navigator.geolocation.watchPosition(
       async (position) => {
         await processGPSLocation(deviceId, position, 'continuous_gps');
@@ -172,9 +177,9 @@ const Dashboard = ({ user, onLogout }) => {
       },
       {
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 1000,
-        distanceFilter: 1 // Update every 1 meter movement
+        timeout: 10000,
+        maximumAge: 0,
+        distanceFilter: 0 // Update even with smallest movement
       }
     );
 
@@ -202,19 +207,37 @@ const Dashboard = ({ user, onLogout }) => {
     setGpsAccuracy(position.coords.accuracy);
     setLocationUpdates(prev => prev + 1);
     
-    // Update user location for map
+    // Update user location for map IMMEDIATELY
     setUserLocation({
       latitude: location.latitude,
       longitude: location.longitude
     });
 
-    await updateDeviceLocation(deviceId, location);
+    // Update real-time devices state IMMEDIATELY
+    updateRealTimeDevice(deviceId, location);
+    
+    // Send to backend (but don't wait for it)
+    updateDeviceLocation(deviceId, location);
+  };
+
+  const updateRealTimeDevice = (deviceId, location) => {
+    setRealTimeDevices(prev => ({
+      ...prev,
+      [deviceId]: {
+        device_id: deviceId,
+        device_name: isMobileDevice() ? 'My Mobile Phone' : 'My Computer',
+        device_type: isMobileDevice() ? 'mobile' : 'laptop',
+        last_location: location,
+        last_updated: new Date().toISOString(),
+        is_mobile: location.is_mobile || false
+      }
+    }));
   };
 
   const getGPSQuality = (accuracy) => {
-    if (accuracy < 10) return 'excellent';
-    if (accuracy < 25) return 'good';
-    if (accuracy < 50) return 'moderate';
+    if (accuracy < 5) return 'excellent';
+    if (accuracy < 15) return 'good';
+    if (accuracy < 30) return 'moderate';
     return 'poor';
   };
 
@@ -239,6 +262,7 @@ const Dashboard = ({ user, onLogout }) => {
             source: 'browser_geolocation',
             is_mobile: false
           };
+          updateRealTimeDevice(deviceId, location);
           await updateDeviceLocation(deviceId, location);
         },
         async (error) => {
@@ -246,9 +270,9 @@ const Dashboard = ({ user, onLogout }) => {
           await updateNetworkLocation(deviceId);
         },
         {
-          enableHighAccuracy: false,
+          enableHighAccuracy: true, // Try high accuracy even on desktop
           timeout: 8000,
-          maximumAge: 300000
+          maximumAge: 0
         }
       );
     } else {
@@ -258,12 +282,13 @@ const Dashboard = ({ user, onLogout }) => {
     // Set up periodic updates
     locationIntervalRef.current = setInterval(async () => {
       await updateNetworkLocation(deviceId);
-    }, 15000);
+    }, 5000); // Faster updates: 5 seconds instead of 15
   };
 
   const updateNetworkLocation = async (deviceId) => {
     try {
       const networkLocation = await getNetworkBasedLocation();
+      updateRealTimeDevice(deviceId, networkLocation);
       await updateDeviceLocation(deviceId, networkLocation);
     } catch (error) {
       console.error('Network location update failed:', error);
@@ -281,7 +306,7 @@ const Dashboard = ({ user, onLogout }) => {
 
       for (const service of services) {
         try {
-          const response = await fetch(service, { timeout: 5000 });
+          const response = await fetch(service, { timeout: 3000 });
           if (response.ok) {
             const data = await response.json();
             
@@ -289,7 +314,7 @@ const Dashboard = ({ user, onLogout }) => {
               return {
                 latitude: data.latitude,
                 longitude: data.longitude,
-                accuracy: 1000, // Network location accuracy is lower
+                accuracy: 500, // Network location accuracy is lower
                 city: data.city || 'Unknown',
                 country: data.country_name || data.country || 'Unknown',
                 location_type: 'network_ip',
@@ -309,7 +334,7 @@ const Dashboard = ({ user, onLogout }) => {
       return {
         latitude: 6.9271 + (Math.random() - 0.5) * 0.001,
         longitude: 79.8612 + (Math.random() - 0.5) * 0.001,
-        accuracy: 5000,
+        accuracy: 1000,
         city: 'Colombo',
         country: 'Sri Lanka',
         location_type: 'network_fallback',
@@ -322,7 +347,7 @@ const Dashboard = ({ user, onLogout }) => {
       return {
         latitude: 6.9271,
         longitude: 79.8612,
-        accuracy: 10000,
+        accuracy: 1500,
         city: 'Colombo',
         country: 'Sri Lanka',
         location_type: 'default',
@@ -347,6 +372,7 @@ const Dashboard = ({ user, onLogout }) => {
       if (response.ok) {
         const result = await response.json();
         
+        // Update local devices state with real-time data
         setDevices(prevDevices => {
           const updatedDevices = prevDevices.map(device => 
             device.device_id === deviceId 
@@ -406,7 +432,39 @@ const Dashboard = ({ user, onLogout }) => {
     try {
       const response = await apiRequest(`/devices/${user.email}`);
       const data = await response.json();
-      setDevices(data);
+      
+      // Merge backend data with real-time updates
+      const mergedDevices = data.map(backendDevice => {
+        const realTimeDevice = realTimeDevices[backendDevice.device_id];
+        if (realTimeDevice && 
+            realTimeDevice.last_location && 
+            backendDevice.last_location) {
+          
+          // Use real-time data if it's more recent
+          const backendTime = new Date(backendDevice.last_updated).getTime();
+          const realTimeTime = new Date(realTimeDevice.last_updated).getTime();
+          
+          if (realTimeTime > backendTime) {
+            return {
+              ...backendDevice,
+              last_location: realTimeDevice.last_location,
+              last_updated: realTimeDevice.last_updated,
+              is_mobile: realTimeDevice.is_mobile || backendDevice.is_mobile
+            };
+          }
+        }
+        return backendDevice;
+      });
+      
+      // Add any real-time devices not in backend
+      Object.values(realTimeDevices).forEach(realTimeDevice => {
+        const exists = mergedDevices.some(d => d.device_id === realTimeDevice.device_id);
+        if (!exists) {
+          mergedDevices.push(realTimeDevice);
+        }
+      });
+      
+      setDevices(mergedDevices);
     } catch (err) {
       console.error('Failed to fetch devices:', err);
     }
@@ -456,6 +514,14 @@ const Dashboard = ({ user, onLogout }) => {
             is_mobile: isMobileDevice(),
             gps_quality: getGPSQuality(position.coords.accuracy)
           };
+          
+          // Update immediately
+          updateRealTimeDevice(currentDeviceId, location);
+          setUserLocation({
+            latitude: location.latitude,
+            longitude: location.longitude
+          });
+          
           await updateDeviceLocation(currentDeviceId, location);
           setLocationStatus(isMobileDevice() ? 'tracking_mobile_gps' : 'tracking_desktop_enhanced');
         },
@@ -523,6 +589,27 @@ const Dashboard = ({ user, onLogout }) => {
 
   const getSimulatedDays = () => {
     return Math.min(7, Math.floor(behaviorProgress / 100 * 7));
+  };
+
+  // Combine backend devices with real-time updates for display
+  const getDisplayDevices = () => {
+    const displayDevices = [...devices];
+    
+    // Update with real-time data
+    Object.values(realTimeDevices).forEach(realTimeDevice => {
+      const index = displayDevices.findIndex(d => d.device_id === realTimeDevice.device_id);
+      if (index >= 0) {
+        displayDevices[index] = {
+          ...displayDevices[index],
+          last_location: realTimeDevice.last_location,
+          last_updated: realTimeDevice.last_updated
+        };
+      } else {
+        displayDevices.push(realTimeDevice);
+      }
+    });
+    
+    return displayDevices;
   };
 
   return (
@@ -607,14 +694,14 @@ const Dashboard = ({ user, onLogout }) => {
       <div className="dashboard-content">
         <div className="devices-section">
           <div className="section-header">
-            <h3>My Devices ({devices.length})</h3>
+            <h3>My Devices ({getDisplayDevices().length})</h3>
             <div className="location-controls">
               <button className="btn btn-small btn-high-accuracy" onClick={forceHighAccuracyUpdate}>
                 🎯 High Accuracy Update
               </button>
             </div>
           </div>
-          {devices.map((device, index) => (
+          {getDisplayDevices().map((device, index) => (
             <div key={device.device_id} className="device-card">
               <div className="device-header">
                 <h4>{device.device_name || `Device ${index + 1}`}</h4>
@@ -645,7 +732,12 @@ const Dashboard = ({ user, onLogout }) => {
                 </p>
                 <p><strong>Accuracy:</strong> {device.last_location?.accuracy ? `±${Math.round(device.last_location.accuracy)}m` : 'Unknown'}</p>
                 <p><strong>Last Update:</strong> {device.last_updated ? 
-                  new Date(device.last_updated).toLocaleTimeString('en-US', { timeZone: 'Asia/Colombo' }) : 'Never'}</p>
+                  new Date(device.last_updated).toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    second: '2-digit',
+                    timeZone: 'Asia/Colombo' 
+                  }) : 'Never'}</p>
                 
                 {device.last_location?.heading && (
                   <p><strong>Heading:</strong> {device.last_location.heading.toFixed(1)}°</p>
@@ -662,7 +754,7 @@ const Dashboard = ({ user, onLogout }) => {
               )}
             </div>
           ))}
-          {devices.length === 0 && (
+          {getDisplayDevices().length === 0 && (
             <div className="no-devices">
               <p>No devices found. Complete device setup to start tracking.</p>
             </div>
@@ -729,7 +821,7 @@ const Dashboard = ({ user, onLogout }) => {
         <div className="map-section">
           <h3>Live Device Locations</h3>
           <div className="map-container">
-            <MapView devices={devices} userLocation={userLocation} />
+            <MapView devices={getDisplayDevices()} userLocation={userLocation} />
           </div>
           
           <div className="campus-legend">
@@ -764,11 +856,11 @@ const Dashboard = ({ user, onLogout }) => {
             </div>
             <div className="legend-item">
               <span className="gps-quality excellent"></span>
-              <span>Excellent GPS (&lt;10m accuracy)</span>
+              <span>Excellent GPS (&lt;5m accuracy)</span>
             </div>
             <div className="legend-item">
               <span className="gps-quality good"></span>
-              <span>Good GPS (10-25m accuracy)</span>
+              <span>Good GPS (5-15m accuracy)</span>
             </div>
           </div>
         </div>
