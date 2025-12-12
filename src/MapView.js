@@ -12,23 +12,19 @@ L.Icon.Default.mergeOptions({
 });
 
 class CampusManager {
-  constructor(firstDeviceLocation) {
-    this.firstDeviceLocation = firstDeviceLocation;
+  constructor(campusCenterLocation) {
+    this.campusCenterLocation = campusCenterLocation;
     this.campusBounds = this.generateCampusBounds();
     this.sections = this.generateCampusSections();
-    this.campusCenter = this.firstDeviceLocation ? {
-      latitude: firstDeviceLocation.latitude,
-      longitude: firstDeviceLocation.longitude
-    } : null;
   }
 
   generateCampusBounds() {
-    if (!this.firstDeviceLocation) {
-      // Default fallback if no first device location
+    if (!this.campusCenterLocation) {
+      // Default fallback if no campus center location
       return [[6.9270, 79.8610], [6.9272, 79.8612]];
     }
     
-    const { latitude, longitude } = this.firstDeviceLocation;
+    const { latitude, longitude } = this.campusCenterLocation;
     const { CAMPUS_WIDTH, CAMPUS_HEIGHT } = config.CAMPUS_SETTINGS;
     
     const southWest = [
@@ -539,9 +535,7 @@ function StableMapUpdater({ devices, userInteracting, campusBounds }) {
   return null;
 }
 
-function CampusSectionsRenderer({ sections, firstDevice }) {
-  if (!firstDevice || !firstDevice.last_location) return null;
-  
+function CampusSectionsRenderer({ sections, campusCenterDevice }) {
   return (
     <>
       {sections.map((section) => (
@@ -563,17 +557,10 @@ function CampusSectionsRenderer({ sections, firstDevice }) {
               <p><strong>Description:</strong> {section.description}</p>
               <p><strong>Size:</strong> {section.width} × {section.height}</p>
               <p>
-                <strong>Centered Around:</strong> {firstDevice.device_name || 'First Device'}
+                <strong>Campus Center:</strong> Fixed location
               </p>
               <p>
-                <strong>Distance from Center:</strong> {Math.round(
-                  new CampusManager(firstDevice.last_location).calculateDistance(
-                    firstDevice.last_location.latitude,
-                    firstDevice.last_location.longitude,
-                    section.coordinates[0][0],
-                    section.coordinates[0][1]
-                  )
-                )} meters
+                <strong>Campus Creator:</strong> {campusCenterDevice?.device_name || 'First Device'}
               </p>
               <p><em>Campus location is fixed and does not move with devices</em></p>
             </div>
@@ -603,23 +590,23 @@ function CampusBoundaryRenderer({ campusBounds }) {
         <div className="campus-section-popup">
           <h4>🏫 University Campus</h4>
           <p><strong>Main Campus Area</strong></p>
-          <p><strong>Centered Around:</strong> First Registered Device Location</p>
           <p><strong>Fixed Location:</strong> Campus does not move with devices</p>
           <p><strong>Dimensions:</strong> 20m × 20m</p>
           <p><strong>Sections:</strong> 4 properly separated rectangular sections</p>
+          <p><em>Campus center is fixed at the location where the first device registered</em></p>
         </div>
       </Popup>
     </Rectangle>
   );
 }
 
-function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection, firstDevice }) {
+function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStatusText, isCurrentDevice, getCurrentSection, campusCenterDeviceId, campusCenterLocation }) {
   return (
     <>
       {devices.map((device, index) => {
         const currentSection = getCurrentSection(device);
         const gpsQuality = device.last_location?.gps_quality;
-        const isFirstDevice = firstDevice && device.device_id === firstDevice.device_id;
+        const isCampusCenterDevice = campusCenterDeviceId && device.device_id === campusCenterDeviceId;
         
         return (
           <Marker
@@ -632,13 +619,13 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
               device.is_mobile,
               isCurrentDevice(device),
               gpsQuality,
-              isFirstDevice
+              isCampusCenterDevice
             )}
           >
             <Popup>
               <div className="popup-content">
                 <strong>{device.device_name || `Device ${index + 1}`}</strong>
-                {isFirstDevice && (
+                {isCampusCenterDevice && (
                   <div style={{
                     background: '#6366F1',
                     color: 'white',
@@ -648,7 +635,7 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                     fontWeight: 'bold',
                     margin: '5px 0'
                   }}>
-                    🏫 CAMPUS CENTER (Fixed Location)
+                    🏫 CAMPUS CREATOR
                   </div>
                 )}
                 <div className="popup-details">
@@ -695,9 +682,11 @@ function StableDevicesRenderer({ devices, campusManager, getMarkerColor, getStat
                   {isCurrentDevice(device) && (
                     <div><strong>📍 Current Device - Live Tracking</strong></div>
                   )}
-                  {isFirstDevice && (
+                  {isCampusCenterDevice && campusCenterLocation && (
                     <div style={{marginTop: '5px', padding: '5px', background: '#f0f9ff', borderRadius: '4px'}}>
-                      <small><strong>Note:</strong> Campus is fixed at this device's initial location</small>
+                      <small>
+                        <strong>Campus Center:</strong> Fixed at (Lat: {campusCenterLocation.latitude.toFixed(6)}, Lng: {campusCenterLocation.longitude.toFixed(6)})
+                      </small>
                     </div>
                   )}
                 </div>
@@ -762,28 +751,20 @@ const MapView = ({ devices, userLocation }) => {
   const [campusSections, setCampusSections] = useState([]);
   const [campusBounds, setCampusBounds] = useState(null);
   const [mapReady, setMapReady] = useState(false);
+  const [campusCenterLocation, setCampusCenterLocation] = useState(null);
+  const [campusCenterDeviceId, setCampusCenterDeviceId] = useState(null);
   const [firstDevice, setFirstDevice] = useState(null);
-  const [campusCenter, setCampusCenter] = useState(null);
 
-  // Find the first device reliably - using multiple strategies
+  // Find the first device and save campus center location
   useEffect(() => {
     if (devices.length > 0) {
-      console.log('All devices received:', devices.map(d => ({
-        id: d.device_id,
-        name: d.device_name,
-        created: d.created_at,
-        updated: d.last_updated
-      })));
-      
-      // Strategy 1: Try to get device with earliest created_at
+      // Find the first device (with the earliest created_at or first in list)
       let firstDeviceCandidate = null;
       let earliestTime = Infinity;
       
-      // Strategy 2: If created_at is not reliable, use device_id pattern or index
       devices.forEach((device, index) => {
         let deviceTime = Infinity;
         
-        // Try to parse created_at
         if (device.created_at) {
           try {
             const time = new Date(device.created_at).getTime();
@@ -796,38 +777,49 @@ const MapView = ({ devices, userLocation }) => {
           }
         }
         
-        // If no valid created_at, use the first device in the array as fallback
         if (!firstDeviceCandidate && index === 0) {
           firstDeviceCandidate = device;
         }
       });
       
-      if (firstDeviceCandidate && firstDeviceCandidate.last_location) {
-        console.log('Selected first device:', firstDeviceCandidate.device_name || firstDeviceCandidate.device_id);
+      if (firstDeviceCandidate) {
         setFirstDevice(firstDeviceCandidate);
         
-        // Store the campus center location in localStorage for persistence
-        const campusCenterData = {
-          latitude: firstDeviceCandidate.last_location.latitude,
-          longitude: firstDeviceCandidate.last_location.longitude,
-          device_id: firstDeviceCandidate.device_id,
-          device_name: firstDeviceCandidate.device_name,
-          timestamp: Date.now()
-        };
-        
-        localStorage.setItem('campus_center', JSON.stringify(campusCenterData));
-        setCampusCenter(campusCenterData);
+        // Check if we need to save a new campus center
+        const savedCampusCenter = localStorage.getItem('campus_center');
+        if (!savedCampusCenter && firstDeviceCandidate.last_location) {
+          // Save the campus center location when first device is registered
+          const campusCenterData = {
+            latitude: firstDeviceCandidate.last_location.latitude,
+            longitude: firstDeviceCandidate.last_location.longitude,
+            device_id: firstDeviceCandidate.device_id,
+            device_name: firstDeviceCandidate.device_name,
+            timestamp: Date.now()
+          };
+          
+          localStorage.setItem('campus_center', JSON.stringify(campusCenterData));
+          setCampusCenterLocation({
+            latitude: campusCenterData.latitude,
+            longitude: campusCenterData.longitude
+          });
+          setCampusCenterDeviceId(campusCenterData.device_id);
+          console.log('Saved new campus center location:', campusCenterData);
+        }
       }
     }
   }, [devices]);
 
-  // Check for existing campus center in localStorage on initial load
+  // Load campus center from localStorage on initial load
   useEffect(() => {
     const savedCampusCenter = localStorage.getItem('campus_center');
     if (savedCampusCenter) {
       try {
         const centerData = JSON.parse(savedCampusCenter);
-        setCampusCenter(centerData);
+        setCampusCenterLocation({
+          latitude: centerData.latitude,
+          longitude: centerData.longitude
+        });
+        setCampusCenterDeviceId(centerData.device_id);
         console.log('Loaded campus center from storage:', centerData);
       } catch (e) {
         console.error('Failed to parse saved campus center:', e);
@@ -835,35 +827,24 @@ const MapView = ({ devices, userLocation }) => {
     }
   }, []);
 
-  // Create campus around the first device OR saved campus center
+  // Create campus using the saved campus center location (not device's current location)
   useEffect(() => {
     let campusLocation = null;
-    let campusSource = 'unknown';
     
-    if (campusCenter) {
-      // Use saved campus center from localStorage
-      campusLocation = {
-        latitude: campusCenter.latitude,
-        longitude: campusCenter.longitude
-      };
-      campusSource = 'saved_storage';
+    if (campusCenterLocation) {
+      // Use saved fixed campus center location
+      campusLocation = campusCenterLocation;
     } else if (firstDevice && firstDevice.last_location) {
-      // Use current first device location
+      // First time - use first device's location but don't save it yet (will be saved above)
       campusLocation = firstDevice.last_location;
-      campusSource = 'first_device_current';
-    } else if (devices.length > 0 && devices[0].last_location) {
-      // Fallback to first device in list
-      campusLocation = devices[0].last_location;
-      campusSource = 'first_in_list';
     } else if (userLocation) {
       // Fallback to user location
       campusLocation = userLocation;
-      campusSource = 'user_location';
     }
     
     if (config.CAMPUS_SETTINGS.AUTO_CREATE_CAMPUS && campusLocation) {
       try {
-        console.log(`Creating campus from source: ${campusSource}`, campusLocation);
+        console.log('Creating campus at fixed location:', campusLocation);
         const manager = new CampusManager(campusLocation);
         setCampusManager(manager);
         setCampusSections(manager.sections);
@@ -872,7 +853,7 @@ const MapView = ({ devices, userLocation }) => {
         console.error('Error creating campus sections:', error);
       }
     }
-  }, [firstDevice, campusCenter, devices, userLocation]);
+  }, [campusCenterLocation, firstDevice, userLocation]);
 
   const validDevices = devices.filter(device => 
     device.last_location && 
@@ -926,36 +907,31 @@ const MapView = ({ devices, userLocation }) => {
 
   const getInitialCenter = () => {
     // Try to center on campus center if available
-    if (campusCenter) {
-      return [campusCenter.latitude, campusCenter.longitude];
+    if (campusCenterLocation) {
+      return [campusCenterLocation.latitude, campusCenterLocation.longitude];
     }
-    // Try to center on first device if available
-    if (firstDevice && firstDevice.last_location) {
-      return [firstDevice.last_location.latitude, firstDevice.last_location.longitude];
+    // Try to center on any device
+    if (validDevices.length > 0) {
+      return [validDevices[0].last_location.latitude, validDevices[0].last_location.longitude];
     }
     // Fallback to user location
     if (userLocation) {
       return [userLocation.latitude, userLocation.longitude];
     }
-    // Fallback to any device
-    if (validDevices.length > 0) {
-      return [validDevices[0].last_location.latitude, validDevices[0].last_location.longitude];
-    }
     // Default fallback
     return [6.9271, 79.8612];
   };
 
-  // Determine which device is considered the "first device" for display
-  const getDisplayFirstDevice = () => {
-    if (!campusCenter) return firstDevice;
+  // Find the campus center device for display purposes
+  const getCampusCenterDevice = () => {
+    if (!campusCenterDeviceId) return firstDevice;
     
-    // Find the device that matches the saved campus center
     return devices.find(device => 
-      device.device_id === campusCenter.device_id
+      device.device_id === campusCenterDeviceId
     ) || firstDevice;
   };
 
-  const displayFirstDevice = getDisplayFirstDevice();
+  const campusCenterDevice = getCampusCenterDevice();
 
   return (
     <MapContainer
@@ -1002,7 +978,7 @@ const MapView = ({ devices, userLocation }) => {
       {campusSections.length > 0 && (
         <CampusSectionsRenderer 
           sections={campusSections} 
-          firstDevice={displayFirstDevice}
+          campusCenterDevice={campusCenterDevice}
         />
       )}
       
@@ -1014,7 +990,8 @@ const MapView = ({ devices, userLocation }) => {
           getStatusText={getStatusText}
           isCurrentDevice={isCurrentDevice}
           getCurrentSection={getCurrentSection}
-          firstDevice={displayFirstDevice}
+          campusCenterDeviceId={campusCenterDeviceId}
+          campusCenterLocation={campusCenterLocation}
         />
       )}
 
@@ -1025,8 +1002,8 @@ const MapView = ({ devices, userLocation }) => {
               <strong>No Active Devices</strong>
               <div className="popup-details">
                 <p>Waiting for device location updates...</p>
-                {campusCenter && (
-                  <p><strong>Campus Center:</strong> Fixed at saved location (Lat: {campusCenter.latitude.toFixed(6)}, Lng: {campusCenter.longitude.toFixed(6)})</p>
+                {campusCenterLocation && (
+                  <p><strong>Campus Center:</strong> Fixed at saved location (Lat: {campusCenterLocation.latitude.toFixed(6)}, Lng: {campusCenterLocation.longitude.toFixed(6)})</p>
                 )}
               </div>
             </div>
